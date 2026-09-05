@@ -1,0 +1,73 @@
+# One-command production stack: Postgres + Redis + bot (+ optional local Bot API server).
+# `docker compose up -d` ; logs: `docker compose logs -f bot`
+name: ultimate-waifu-bot
+
+x-bot-env: &bot-env
+  BOT_TOKEN: ${BOT_TOKEN:?set BOT_TOKEN in .env}
+  OWNER_ID: ${OWNER_ID:?set OWNER_ID in .env}
+  DATABASE_URL: postgresql+asyncpg://waifu:waifu@db:5432/waifu
+  REDIS_URL: redis://redis:6379/0
+  MODE: ${MODE:-polling}
+  WEBHOOK_URL: ${WEBHOOK_URL:-}
+  WEBHOOK_SECRET: ${WEBHOOK_SECRET:-}
+  API_URL: ${API_URL:-}
+  API_BASE: ${API_BASE:-}
+
+services:
+  db:
+    image: postgres:17-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: waifu
+      POSTGRES_PASSWORD: waifu
+      POSTGRES_DB: waifu
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U waifu -d waifu"]
+      interval: 10s
+      timeout: 5s
+      retries: 8
+
+  redis:
+    image: redis:7-alpine
+    restart: unless-stopped
+    command: ["redis-server", "--save", "60", "1", "--appendonly", "yes", "--maxmemory", "256mb", "--maxmemory-policy", "allkeys-lru"]
+    volumes:
+      - redisdata:/data
+
+  bot:
+    build: .
+    restart: unless-stopped
+    environment: *bot-env
+    depends_on:
+      db:
+        condition: service_healthy
+      redis:
+        condition: service_started
+    volumes:
+      - botdata:/var/lib/waifu/data
+
+  # One-shot: creates/updates the schema before the bot serves traffic.
+  migrate:
+    build: .
+    command: ["python", "-m", "waifu", "migrate"]
+    environment: *bot-env
+    depends_on:
+      db:
+        condition: service_healthy
+    restart: "no"
+
+  # Optional local Bot API server (needed for >5MB uploads and heavy traffic).
+  apiserver:
+    image: ghcr.io/aiogram/bot-api-server:latest
+    restart: unless-stopped
+    profiles: ["local-api"]
+    volumes:
+      - apisrv:/var/lib/bot-api-server
+
+volumes:
+  pgdata:
+  redisdata:
+  botdata:
+  apisrv:
