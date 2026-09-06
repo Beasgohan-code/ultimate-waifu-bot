@@ -17,10 +17,15 @@ quirks kept, because they turned out to be the right ones:
 * **Nothing is invented.** Names, series and tiers are only ever what an admin wrote; the
   tier decides price and power, so a two-word caption is a complete character.
 
-On top of that parity, the 2026 Bot API pieces the old bot could not reach:
+``/upload`` is a port, not a redesign: the guard order, the three-word grammar, the photo →
+video → GIF media pick, the zero-padded gap-filled id, the exact reply strings and the
+``up_*`` callback data are the reference's, on purpose ("same, no change"). Where the new
+API or a safer default genuinely adds something, it is reachable through a *separate* door
+(``/autoadd``, ``/addchar``) so that the ported flow stays the flow its admins memorised:
 
 * a **Live Photo** (a photo carrying a paired video, API 9.1) is stored whole on
-  ``live_photo_file_id`` instead of being flattened to its still;
+  ``live_photo_file_id`` by ``/autoadd`` and ``/addchar`` — ``/upload`` flattens it to its
+  still, exactly as the reference does;
 * **``/autoadd``** turns a group or channel into an ingest feed: media an admin posts with a
   caption becomes a character with no command at all, acknowledged by an **ephemeral**
   receipt (``EphemeralMessageParameters``) so the group sees the result and nobody else's
@@ -28,16 +33,17 @@ On top of that parity, the 2026 Bot API pieces the old bot could not reach:
 * ``setMessageReaction`` ticks the ingested message ✅, and the host buttons carry
   ``style`` — set through a helper that drops fields an older server rejects.
 
-State: a pending upload lives in :data:`PENDING_UPLOADS` (process-local, keyed ``u<n>``),
-pruned by age and size. The buttons are an *offer*, not a step — the character row is
-already complete without them, so losing the state on a restart costs a URL, never a
-character. Handlers write no SQL: every column change goes through the ``characters``
-repository.
+State: a pending upload lives in :data:`PENDING_UPLOADS` (process-local, keyed ``u<n>``)
+until the admin answers or the table passes :data:`PENDING_MAX`. Nothing ages an in-flight
+upload out — the reference bot's entries never expired, and a receipt whose buttons died
+while it was still on screen is worse than an entry that waits. ``/uploads`` prunes by age.
+The buttons are an *offer*, not a step — the character row is already complete without them,
+so losing the state on a restart costs a URL, never a character. Handlers write no SQL:
+every column change goes through the ``characters`` repository.
 """
 
 from __future__ import annotations
 
-import html
 import time
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
@@ -51,10 +57,10 @@ from waifu.db.repositories import characters as char_repo
 from waifu.enums import Rarity
 from waifu.errors import RosterEmpty, WaifuError
 from waifu.logging import get_logger
-from waifu.plugins._kit import cb, note, refuse, staff_of, text
+from waifu.plugins._kit import note, refuse, staff_of, text
 from waifu.tg.media import fingerprint, upload_to_catbox, upload_to_imgbb
 from waifu.tg.messages import style_button
-from waifu.utils.text import strip_md
+from waifu.utils.text import esc, strip_md
 from waifu.utils.time import now_utc
 
 if TYPE_CHECKING:  # pragma: no cover
@@ -73,11 +79,16 @@ autoadd_router = Router(name="autoadd")
 #: until someone rewrote that file.
 PENDING_UPLOADS: dict[str, dict[str, Any]] = {}
 COUNTER = {"n": 0}
-PENDING_TTL = 60 * 60
+PENDING_TTL = 60 * 60  # only used by /uploads, never to expire a live receipt
 PENDING_MAX = 64
 
-#: Callback namespace for the host choice: ``upl:<cb|ib|skip>:<upload_id>``.
-NS = "upl"
+#: The media kinds ``/upload`` accepts — the reference's list, in the reference's order.
+#: Anything else (document, audio, live photo) is refused with the same line it used.
+UPLOAD_KINDS = ("photo", "video", "animation")
+#: The reference bot's callback namespace: ``up_cb|u1``, ``up_ib|u1``, ``up_skip|u1``, and a
+#: handler whose only filter is "starts with ``up_``". Same strings, so an admin's muscle
+#: memory, a forwarded screenshot and any external button builder all still work.
+PREFIX = "up_"
 
 USAGE = (
     "❌ <b>Error: Please reply to an image, video, or GIF!</b>\n\n"
@@ -91,6 +102,10 @@ BAD_FORMAT = (
     "Example: <code>/upload Son-gohan dragon-ball 3</code>"
 )
 BAD_MEDIA = "❌ Unsupported media type! Use Photo, Video, GIF, Live Photo, or a document image."
+#: What ``/upload`` answers when the media it was given is not one of the three kinds.
+BAD_UPLOAD_MEDIA = "❌ Unsupported media type! Use Photo, Video, or GIF."
+#: The reference's refusal, one line, unchanged.
+DENIED = "❌ Not allowed"
 BAD_RARITY = f"❌ Invalid Rarity ID! Use 1-{len(list(Rarity))}."
 EXPIRED = "❌ Session expired. Re-upload with /upload."
 #: Suffix per media kind, so the temp file a web host receives keeps a real extension
@@ -103,6 +118,34 @@ def new_upload_id() -> str:
     """``u1``, ``u2``, … — the reference bot's ``new_upload_id``, counter included."""
     COUNTER["n"] += 1
     return f"u{COUNTER['n']}"
+
+
+def up_data(action: str, upload_id: str) -> str:
+    """``up_cb|u1`` — the reference's callback payload, verbatim in shape."""
+    return f"{PREFIX}{action}|{upload_id}"
+
+
+def parse_up_data(data: str | None) -> tuple[str, str]:
+    """Inverse of :func:`up_data`; ``("", "")`` for anything that is not one of ours."""
+    raw = data or ""
+    if not raw.startswith(PREFIX):
+        return "", ""
+    head, _, upload_id = raw[len(PREFIX) :].partition("|")
+    return head, upload_id
+
+
+def cap_pending() -> int:
+    """Keep :data:`PENDING_UPLOADS` bounded, oldest first — no expiry of live receipts."""
+    if len(PENDING_UPLOADS) <= PENDING_MAX:
+        return 0
+    ordered = sorted(PENDING_UPLOADS, key=lambda key: PENDING_UPLOADS[key].get("at", 0))
+    dropped = ordered[: len(PENDING_UPLOADS) - PENDING_MAX]
+    for key in dropped:
+        entry = PENDING_UPLOADS.pop(key, None) or {}
+        path = str(entry.get("local_path") or "")
+        if path:
+            Path(path).unlink(missing_ok=True)
+    return len(dropped)
 
 
 def prune_pending() -> int:
@@ -129,34 +172,40 @@ def escape(value: str) -> str:
     every card that showed it (Telegram rejects the message, the admin sees an error and
     the roster entry silently never appears).
     """
-    return html.escape(strip_md(value or ""), quote=False)
+    return esc(strip_md(value or ""))
 
 
-def media_of(message: Message) -> tuple[str, str]:
-    """``(file_id, kind)`` for the best media on ``message``.
+def media_of(message: Message, allow: tuple[str, ...] | None = None) -> tuple[str, str]:
+    """``(file_id, kind)`` for the best media on ``message``, in the reference's priority.
 
-    Priority matches the reference bot — photo, then video, then animation — with one
-    addition it could not make: a message carrying *both* a photo and a video is a Live
-    Photo (API 9.1), so it is filed as ``live`` and the motion survives.
+    ``allow`` narrows the list: ``/upload`` passes :data:`UPLOAD_KINDS` so that a document
+    or a Live Photo is *not* quietly accepted (the reference picks the still of a Live
+    Photo because it checks ``photo`` first — the same happens here). ``/autoadd`` passes
+    nothing and additionally recognises ``live`` (a photo paired with a video, API 9.1) and
+    ``document``, because in a feed chat an admin posts whatever the artist sent.
     """
     photo = message.photo[-1].file_id if message.photo else ""
     video = message.video.file_id if message.video else ""
+    pairs: list[tuple[str, str]] = []
     if photo and video:
-        return video, "live"
+        pairs.append((video, "live"))
     if photo:
-        return photo, "photo"
+        pairs.append((photo, "photo"))
     if video:
-        return video, "video"
+        pairs.append((video, "video"))
     if message.animation:
-        return message.animation.file_id, "animation"
+        pairs.append((message.animation.file_id, "animation"))
     if message.document:
-        return message.document.file_id, "document"
+        pairs.append((message.document.file_id, "document"))
+    for file_id, kind in pairs:
+        if allow is None or kind in allow:
+            return file_id, kind
     return "", ""
 
 
-def columns_for(message: Message) -> dict[str, str]:
+def columns_for(message: Message, allow: tuple[str, ...] | None = None) -> dict[str, str]:
     """Which ``characters`` columns the media of ``message`` fills."""
-    file_id, kind = media_of(message)
+    file_id, kind = media_of(message, allow=allow)
     if not file_id:
         return {}
     if kind == "photo":
@@ -292,6 +341,7 @@ async def ingest(
     anime: str,
     rarity: Rarity,
     auto: bool = False,
+    allow: tuple[str, ...] | None = None,
 ) -> dict[str, Any]:
     """File one character from ``source``'s media and return its pending-upload entry.
 
@@ -304,7 +354,7 @@ async def ingest(
        deployment that channel was the archive a database was rebuilt from;
     4. only then the buttons.
     """
-    columns = columns_for(source)
+    columns = columns_for(source, allow=allow)
     if not columns:
         raise WaifuError(BAD_MEDIA)
     char, created = await char_repo.create_or_update(
@@ -312,13 +362,16 @@ async def ingest(
         name=name,
         anime=anime,
         rarity=rarity,
+        # The reference bot numbers its roster itself (lowest free id, two digits) and
+        # admins quote those numbers everywhere, so a sequence may not pick them.
+        assign_id=await char_repo.next_free_id(session),
         photo_file_id=columns.get("photo_file_id", ""),
         video_file_id=columns.get("video_file_id", ""),
         live_photo_file_id=columns.get("live_photo_file_id", ""),
     )
     ref = f"{int(char.id):02d}"
-    file_id, kind = media_of(source)
-    local_path = await download_media(ctx, source, ref=ref, kind=kind)
+    file_id, kind = media_of(source, allow=allow)
+    local_path = await download_media(ctx, source, ref=ref, kind=kind, allow=allow)
     upload_id = new_upload_id()
     entry: dict[str, Any] = {
         "file_id": file_id,
@@ -334,6 +387,7 @@ async def ingest(
         "created": created,
     }
     PENDING_UPLOADS[upload_id] = entry
+    cap_pending()
 
     # Fingerprint the bytes while they are in hand: "the same character twice under two
     # spellings" is the most common roster disease in a bot run by a committee, and a hash
@@ -360,13 +414,20 @@ async def ingest(
     return entry
 
 
-async def download_media(ctx: AppContext, message: Message, *, ref: str, kind: str) -> Path | None:
+async def download_media(
+    ctx: AppContext,
+    message: Message,
+    *,
+    ref: str,
+    kind: str,
+    allow: tuple[str, ...] | None = None,
+) -> Path | None:
     """Copy the media into ``upload_dir`` so a web host can be offered for it.
 
     The ``file_id`` is already the durable copy, so a failed download is reported as "no
     URL available" and never as a lost character.
     """
-    file_id, _ = media_of(message)
+    file_id, _ = media_of(message, allow=allow)
     if not file_id or ctx.bot is None:
         return None
     directory = anyio.Path(ctx.settings.upload_dir)
@@ -422,15 +483,17 @@ async def post_to_log_channel(
 
 
 def host_buttons(upload_id: str) -> list[list[InlineKeyboardButton]]:
-    """The three choices the reference bot offered — same offers, styled (10.x)."""
+    """The three choices the reference bot offered — same payload, styled (Bot API 10.x)."""
     return [
         [
-            style_button("📤 Catbox", callback_data=cb(NS, "cb", upload_id), style="success"),
-            style_button("📤 ImgBB", callback_data=cb(NS, "ib", upload_id)),
+            style_button("📤 Catbox", callback_data=up_data("cb", upload_id), style="success"),
+            style_button("📤 ImgBB", callback_data=up_data("ib", upload_id)),
         ],
         [
             style_button(
-                "⏭ Skip (file_id only)", callback_data=cb(NS, "skip", upload_id), style="danger"
+                "⏭ Skip (file_id only)",
+                callback_data=up_data("skip", upload_id),
+                style="danger",
             )
         ],
     ]
@@ -458,46 +521,54 @@ def receipt(entry: dict[str, Any]) -> str:
 
 # ---------------------------------------------------------------------- commands
 @router.message(Command("upload", "uploadchar"))
-async def upload(  # noqa: PLR0911 - a guard per way an admin can hold the phone
-    message: Message, ctx: AppContext, session: Any, command: CommandObject, access: Access
-) -> None:
-    """``/upload Name Series 1-18`` as a reply to media — creates the character.
+async def upload(message: Message, ctx: AppContext, session: Any, access: Access) -> None:
+    """``/upload <name> <series> <1-18>`` as a reply to media — creates the character.
+
+    Every line an admin can see here is the reference bot's, including the unhelpful ones:
+    a wrong number of words gets ``❌ Invalid Format!``, a document gets ``❌ Unsupported
+    media type! Use Photo, Video, or GIF.``, and an outsider gets ``❌ Not allowed``.
 
     Gated on ``edit_roster`` (owner, or a sudo admin the owner granted): the roster *is*
     the product, so it is not writable by whoever happens to run a group.
     """
     try:
         access.require("edit_roster")
-    except WaifuError as exc:
-        await refuse(message, exc.user_message)
+    except WaifuError:
+        # The reference replies with a bare "❌ Not allowed" — one line, no lecture, and no
+        # hint about which id *would* be allowed. The reason goes to the log, never the chat.
+        log.info("upload denied for %s (no edit_roster)", access.user_id)
+        await refuse(message, DENIED)
         return
-    prune_pending()
-    args = command.args or ""
-    if args.strip().lower() in {"list", "pending"}:
-        await pending_list(message, ctx)
-        return
-    if args.strip().lower() in {"help", "?", ""} and message.reply_to_message is None:
-        await text(message, ctx, USAGE)
-        return
-    source = message.reply_to_message
-    if source is None:
-        await text(message, ctx, USAGE)
-        return
-    if not media_of(source)[0]:
-        await refuse(message, BAD_MEDIA)
-        return
-    fields = fields_of(args)
-    if len(fields) < 3:
+    # Three words, in this order, and no other spelling of them: the reference bot's
+    # grammar, kept exactly (``/autoadd`` and ``/addchar`` are where the tolerance lives).
+    args = (message.text or "").split()[1:]
+    if len(args) != 3:
         await text(message, ctx, BAD_FORMAT)
         return
-    name, anime, tier = split_entry(fields)
-    rarity = parse_tier(tier)
-    if rarity is None:
+    name, anime, tier = split_entry(args)
+    # The reference wrote ``int(args[2])``, so ``/upload Yor Anime gold`` raised ValueError
+    # inside the handler and the update died half-applied. Refusing costs nothing.
+    if not tier.isdigit() or not 1 <= int(tier) <= len(list(Rarity)):
         await refuse(message, BAD_RARITY)
+        return
+    rarity = Rarity(int(tier))
+    source = message.reply_to_message
+    if source is None or not media_of(source)[0]:
+        await text(message, ctx, USAGE)
+        return
+    if not media_of(source, allow=UPLOAD_KINDS)[0]:
+        await refuse(message, BAD_UPLOAD_MEDIA)
         return
     try:
         entry = await ingest(
-            ctx, session, event=message, source=source, name=name, anime=anime, rarity=rarity
+            ctx,
+            session,
+            event=message,
+            source=source,
+            name=name,
+            anime=anime,
+            rarity=rarity,
+            allow=UPLOAD_KINDS,
         )
     except WaifuError as exc:
         await refuse(message, exc.user_message)
@@ -583,8 +654,8 @@ async def pending_list(message: Message, ctx: AppContext) -> None:
     ]
     rows = [
         [
-            style_button("📤 Catbox", callback_data=cb(NS, "cb", key), style="success"),
-            style_button("⏭ Skip", callback_data=cb(NS, "skip", key)),
+            style_button("📤 Catbox", callback_data=up_data("cb", key), style="success"),
+            style_button("⏭ Skip", callback_data=up_data("skip", key)),
         ]
         for key in keys[:6]
     ]
@@ -727,7 +798,7 @@ async def autoadd_ingest(message: Message, ctx: AppContext, session: Any) -> Non
 
 
 # ---------------------------------------------------------------------- callbacks
-@router.callback_query(F.data.startswith(f"{NS}:"))
+@router.callback_query(F.data.startswith(PREFIX))
 async def upload_callback(callback_query: CallbackQuery, ctx: AppContext, session: Any) -> None:
     """The host choice on a finished upload: Catbox, ImgBB, or keep the file_id only.
 
@@ -737,8 +808,7 @@ async def upload_callback(callback_query: CallbackQuery, ctx: AppContext, sessio
     that the character is saved.
     """
     await callback_query.answer()
-    parts = (callback_query.data or "").split(":")
-    action, upload_id = (parts[1], parts[2]) if len(parts) == 3 else ("", "")
+    action, upload_id = parse_up_data(callback_query.data)
     entry = PENDING_UPLOADS.get(upload_id)
     message = callback_query.message
     if entry is None or message is None:
@@ -846,15 +916,19 @@ async def _finish(
 
 __all__ = [
     "PENDING_UPLOADS",
+    "UPLOAD_KINDS",
     "autoadd_fields",
     "autoadd_router",
+    "cap_pending",
     "columns_for",
     "fields_of",
     "media_of",
     "new_upload_id",
     "parse_tier",
+    "parse_up_data",
     "prune_pending",
     "receipt",
     "router",
     "split_entry",
+    "up_data",
 ]

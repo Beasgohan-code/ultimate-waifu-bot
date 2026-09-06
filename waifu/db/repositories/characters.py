@@ -293,6 +293,28 @@ async def rarity_distribution(session: AsyncSession) -> dict[int, int]:
 
 
 # ------------------------------------------------------------------- admin mutate
+async def next_free_id(session: AsyncSession) -> int:
+    """The id a *new* row should take — the reference bot's ``new_upload_id`` rule.
+
+    Summon-bot numbered its roster by hand (``01``, ``02``, ``03``…) and filled the lowest
+    gap: those numbers are what admins quote in ``/delchar``, in captions, and in the log
+    channel a database was rebuilt from, so a deleted ``07`` belongs to the next upload
+    rather than being skipped forever. Autoincrement cannot do that, so ``/upload`` asks
+    here and passes the answer to :func:`create_or_update`.
+    """
+    count = int(
+        (await session.execute(select(func.count()).select_from(Character.__table__))).scalar() or 0
+    )
+    top = int((await session.execute(select(func.max(Character.id)))).scalar() or 0)
+    if top == count:  # dense 1..n — the common case, no scan
+        return top + 1
+    used = {int(value) for value in (await session.execute(select(Character.id))).scalars()}
+    candidate = 1
+    while candidate in used:
+        candidate += 1
+    return candidate
+
+
 async def create_or_update(
     session: AsyncSession,
     *,
@@ -300,6 +322,7 @@ async def create_or_update(
     anime: str = "",
     rarity: Rarity = Rarity.COMMON,
     price: int | None = None,
+    assign_id: int | None = None,
     image_url: str = "",
     photo_file_id: str = "",
     video_url: str = "",
@@ -343,6 +366,10 @@ async def create_or_update(
         if value:
             setattr(char, field, value)
     char.banner_weight = banner_weight
+    if created and assign_id is not None:
+        # The admin chose this number (or the gap rule did) — the sequence must not drift
+        # past it, or the next autoincrement insert would collide with a hand-numbered row.
+        char.id = int(assign_id)
     if created:
         session.add(char)
     await session.flush()

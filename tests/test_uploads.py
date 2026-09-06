@@ -265,7 +265,13 @@ async def test_receipt_offers_the_hosts_and_says_the_backup_exists() -> None:
     rows = uploads.host_buttons("u9")
     assert [len(row) for row in rows] == [2, 1]
     data = [button.callback_data for row in rows for button in row]
-    assert all(item and item.startswith("upl:") for item in data)
+    # ``up_cb|u9`` / ``up_ib|u9`` / ``up_skip|u9`` — the reference payload, not a namespace
+    # of our own invention: an admin's saved replies and any external button builder that
+    # already speaks this dialect keep working.
+    assert sorted(filter(None, data)) == ["up_cb|u9", "up_ib|u9", "up_skip|u9"]
+    assert uploads.parse_up_data("up_cb|u9") == ("cb", "u9")
+    assert uploads.parse_up_data("up_skip|u42") == ("skip", "u42")
+    assert uploads.parse_up_data("not:ours") == ("", "")
     assert all(len((item or "").encode()) <= 64 for item in data)
 
 
@@ -473,3 +479,210 @@ async def _count(session: Any, model: Any) -> int:
     from sqlalchemy import func, select
 
     return int((await session.execute(select(func.count()).select_from(model))).scalar_one())
+
+
+# ------------------------------------------------- the /upload contract, line for line
+def _command(text_: str, *, reply: Message | None, sender: User = ADMIN) -> Message:
+    """A command message exactly as aiogram delivers it, with the replied-to media."""
+    return Message.model_construct(
+        message_id=99,
+        date=None,
+        chat=CHAT,
+        from_user=sender,
+        text=text_,
+        reply_to_message=reply,
+    )
+
+
+@pytest.fixture
+def said(monkeypatch, ctx):
+    """What the handler would have put in the chat, captured instead of sent."""
+    lines: list[str] = []
+
+    async def _text(event, ctx_, html, **kwargs):
+        lines.append(html)
+
+    async def _refuse(event, msg):
+        lines.append(msg)
+
+    monkeypatch.setattr(uploads, "text", _text)
+    monkeypatch.setattr(uploads, "refuse", _refuse)
+    return lines
+
+
+async def _call(message, ctx, tx, access, monkeypatch=None):
+    await uploads.upload(message=message, ctx=ctx, session=tx, access=access)
+    return message
+
+
+OWNER = Access(user_id=7, role=Role.OWNER)
+OUTSIDER = Access(user_id=8, role=Role.USER)
+
+
+async def test_outsider_gets_the_reference_refusal_and_nothing_else(tx, ctx, said) -> None:
+    """``/upload`` by a non-admin answers with the reference's one cold line."""
+    before = await _count(tx, Character)
+    message = _command("/upload Yor SpyXFamily 5", reply=photo_message())
+    await uploads.upload(message=message, ctx=ctx, session=tx, access=OUTSIDER)
+    assert said == ["❌ Not allowed"]
+    assert await _count(tx, Character) == before
+    assert not PENDING_UPLOADS
+
+
+async def test_three_words_or_invalid_format(tx, ctx, said) -> None:
+    """The grammar is the reference's: three space-separated fields, nothing looser.
+
+    Two words, four words, a pipe-separated caption or a tier named with a word all fail
+    here — tolerance would silently change what a re-sent command does, and admins have
+    the reference's muscle memory, not ours. ``/autoadd`` is where loose captions live.
+    """
+    reply = photo_message()
+    before = await _count(tx, Character)
+    for raw in (
+        "/upload Yor SpyXFamily",  # too few
+        "/upload Yor Spy Family 5",  # a space in a name is the reference's problem too
+        "/upload Gojo | Jujutsu Kaisen | 4",  # pipes are not this command's grammar
+        "/upload",  # no fields at all
+        "/upload Yor SpyXFamily 5 extra",  # and no extras either
+    ):
+        said.clear()
+        await uploads.upload(message=_command(raw, reply=reply), ctx=ctx, session=tx, access=OWNER)
+        assert any("Invalid Format" in line for line in said), raw
+    assert await _count(tx, Character) == before
+
+
+async def test_rarity_outside_the_ladder_is_refused(tx, ctx, said) -> None:
+    """``0``/``19``/words never reach the DB: the tier *is* the price and the power.
+
+    The reference wrote ``int(args[2])`` and let a ``ValueError`` kill the update; the
+    refusal says the same thing in a sentence, and a tier *name* is ``/addchar``'s door.
+    """
+    before = await _count(tx, Character)
+    for raw in (
+        "/upload Yor SpyXFamily 0",
+        "/upload Yor SpyXFamily 19",
+        "/upload Yor x 999",
+        "/upload Yor SpyXFamily Legendary",
+    ):
+        said.clear()
+        await uploads.upload(
+            message=_command(raw, reply=photo_message()), ctx=ctx, session=tx, access=OWNER
+        )
+        assert said == ["❌ Invalid Rarity ID! Use 1-18."], raw
+    assert await _count(tx, Character) == before
+
+
+async def test_document_art_is_refused_with_the_reference_line(tx, ctx, said) -> None:
+    """/upload takes photo, video or GIF — a .webp file is ``/autoadd``'s business."""
+    document = Message.model_construct(
+        message_id=43,
+        date=None,
+        chat=CHAT,
+        from_user=ADMIN,
+        document=type("D", (), {"file_id": "BQAC/doc", "file_name": "art.webp"})(),
+    )
+    await uploads.upload(
+        message=_command("/upload Yor SpyXFamily 5", reply=document),
+        ctx=ctx,
+        session=tx,
+        access=OWNER,
+    )
+    assert said == ["❌ Unsupported media type! Use Photo, Video, or GIF."]
+    assert not await char_repo.by_name(tx, "Yor", "Spyxfamily")
+
+
+async def test_live_photo_is_flattened_here_but_not_in_the_feed(tx, ctx, said) -> None:
+    """A live photo is a photo *and* a video: ``/upload`` keeps the photo, like the reference."""
+    live = photo_message(video="AgAC/video-live")
+    assert uploads.media_of(live) == ("AgAC/video-live", "live")
+    assert uploads.media_of(live, allow=uploads.UPLOAD_KINDS) == ("AgAC/photo-one", "photo")
+    assert uploads.columns_for(live, allow=uploads.UPLOAD_KINDS) == {
+        "photo_file_id": "AgAC/photo-one"
+    }
+    assert "live_photo_file_id" in uploads.columns_for(live)
+    await uploads.upload(
+        message=_command("/upload Yor SpyXFamily 5", reply=live), ctx=ctx, session=tx, access=OWNER
+    )
+    char = await _by_name(tx, "Yor", "Spyxfamily")
+    assert char is not None and char.live_photo_file_id == ""
+    said.clear()
+
+
+async def test_a_full_upload_writes_the_row_and_offers_the_hosts(
+    tx, ctx, said, tmp_path, monkeypatch
+) -> None:
+    """The whole reference flow, end to end: three words, a photo, a numbered receipt."""
+    monkeypatch.setattr(ctx.settings, "upload_dir", str(tmp_path / "uploads"))
+    monkeypatch.setattr(ctx, "bot", _StubBot())
+    wanted = await char_repo.next_free_id(tx)  # the fixture seeds a roster; the id is a gap/next
+    await uploads.upload(
+        message=_command("/upload yor spyxfamily 5", reply=photo_message()),
+        ctx=ctx,
+        session=tx,
+        access=OWNER,
+    )
+    assert len(said) == 1
+    body = said[0]
+    char = await _by_name(tx, "Yor", "Spyxfamily")
+    assert char is not None
+    assert char.rarity_id == 5 and char.rarity == Rarity(5).display
+    # Zero-padded, gap-filled, chosen by the same rule the reference's /add used: the number
+    # admins will quote in /delchar, in captions and in the log channel.
+    assert int(char.id) == wanted
+    assert f"🆔 <b>ID:</b> <code>{wanted:02d}</code>" in body
+    assert "Character Saved (file_id backup)!" in body
+    assert "❌" not in body
+    assert char.photo_file_id == "AgAC/photo-one"
+    # The buttons are the reference's, and the id in them is the *upload* id, not the row id.
+    upload_id = next(iter(PENDING_UPLOADS))
+    assert f"up_cb|{upload_id}" in str(uploads.host_buttons(upload_id))
+    assert PENDING_UPLOADS[upload_id]["char_id"] == str(wanted).zfill(2)
+    assert PENDING_UPLOADS[upload_id]["character_id"] == wanted
+    # Nothing in flight expires behind the admin's back; only the size cap drops entries.
+    PENDING_UPLOADS[upload_id]["at"] = time.time() - 99 * 60 * 60
+    assert uploads.cap_pending() == 0 and upload_id in PENDING_UPLOADS
+
+
+async def test_the_numbering_fills_the_gap_the_reference_would_fill(tx) -> None:
+    """``next_free_id`` is the reference's rule: lowest gap, else max+1 — never 0.
+
+    Verbatim from ``add_character`` (``commands_admin.py``)::
+
+        SELECT id FROM characters
+        next_number = 1
+        while next_number in existing_ids: next_number += 1
+        char_id = f"{next_number:02d}"
+
+    A fixture-seeded roster shifts the starting point, so the test measures the *rule*:
+    two consecutive numbers, a hole punched, and the next upload falls into the hole.
+    """
+    base = await char_repo.next_free_id(tx)
+    assert base >= 1
+    first, _ = await char_repo.create_or_update(
+        tx, name="Gap A", anime="S", rarity=Rarity.COMMON, assign_id=base
+    )
+    second, _ = await char_repo.create_or_update(
+        tx,
+        name="Gap B",
+        anime="S",
+        rarity=Rarity.COMMON,
+        assign_id=await char_repo.next_free_id(tx),
+    )
+    assert (int(first.id), int(second.id)) == (base, base + 1)
+    assert await char_repo.next_free_id(tx) == base + 2
+    await char_repo.delete_character(tx, base)
+    assert await char_repo.next_free_id(tx) == base, "a deleted number belongs to the next upload"
+
+
+def test_receipts_do_not_expire_while_the_admin_is_reading_them() -> None:
+    """The size cap is the only thing that drops a pending upload from the upload path."""
+    PENDING_UPLOADS.clear()
+    old = {"at": time.time() - 99 * 60 * 60, "local_path": "", "char_id": "01"}
+    PENDING_UPLOADS["u1"] = old
+    assert uploads.cap_pending() == 0  # under the cap: age is irrelevant here
+    assert PENDING_UPLOADS["u1"] is old
+    PENDING_UPLOADS.clear()
+    for index in range(uploads.PENDING_MAX + 3):
+        PENDING_UPLOADS[f"k{index}"] = {"at": index, "local_path": ""}
+    assert uploads.cap_pending() == 3
+    assert len(PENDING_UPLOADS) == uploads.PENDING_MAX

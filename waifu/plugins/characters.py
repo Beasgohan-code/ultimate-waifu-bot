@@ -35,6 +35,7 @@ from waifu.plugins._kit import (
     staff_of,
     text,
 )
+from waifu.utils.text import esc
 
 if TYPE_CHECKING:  # pragma: no cover
     from waifu.core.access import Access
@@ -280,11 +281,18 @@ async def addchar(
         video_file_id=_video_id(message),
         description=message.caption or "",
         tags=tags,
+        # Same numbering door as ``/upload``: the reference bot's ``/add`` filled the lowest
+        # free id and padded it to two digits, and those are the numbers admins quote. Two
+        # ingest paths, one rule — otherwise ``/delchar 07`` followed by a re-add would
+        # give the new character some other number depending on which command was used.
+        assign_id=await char_repo.next_free_id(session),
     )
     await text(
         message,
         ctx,
-        f"{'🆕 added' if created else '♻️ updated'} <b>{character.name}</b> ({character.anime or '—'}) {rarity.badge} · {money(int(character.price))} 🪙 · id {character.id}",
+        f"{'🆕 added' if created else '♻️ updated'} <b>{esc(character.name)}</b> "
+        f"({esc(character.anime) or '—'}) {esc(character.rarity)} · {money(int(character.price))} 🪙 "
+        f"· id <code>{int(character.id):02d}</code>",
     )
 
 
