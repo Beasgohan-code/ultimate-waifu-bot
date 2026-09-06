@@ -31,6 +31,7 @@ from aiogram.types import (
 
 from waifu.enums import ChatMode
 from waifu.logging import get_logger
+from waifu.tg.media import resolve_media
 from waifu.tg.rich import RichButton, RichMessageBuilder
 from waifu.utils.text import truncate
 
@@ -179,11 +180,17 @@ async def _fallback(
     text = caption or builder.fallback_html()
     markup = _markup(buttons or [])
     if photo:
+        # A rendered card is a *local* file: Telegram cannot read our filesystem, so the string
+        # has to become an upload. ``resolve_media`` is the same door ``/media`` uses — file_ids
+        # and URLs pass through untouched, paths turn into ``FSInputFile``.
+        media = resolve_media(photo)
+        if media is None:
+            media = photo
         try:
             message = await bot(
                 SendPhoto(
                     chat_id=chat_id,
-                    photo=photo,
+                    photo=media,
                     caption=truncate(text, 1024) or None,
                     parse_mode="HTML",
                     reply_markup=markup,

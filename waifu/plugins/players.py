@@ -30,6 +30,7 @@ from waifu.plugins._kit import (
     refuse,
     resolve_user,
     shorten,
+    split_cb,
     text,
 )
 from waifu.utils.font import style
@@ -84,7 +85,10 @@ async def send_profile(
         ["level", f"{stats.level} · {bar(stats.exp % 1000, 1000)} {money(stats.exp)} xp"],
         [
             "harem",
-            f"{money(stats.collection)} characters · {money(profile_data.get('value', 0))} 🪙",
+            # ``stats.collection`` is the summary dict, not a number — and the value lives there
+            # too (``profile_data`` has no ``value`` key, so this row used to read "0 🪙" for
+            # everybody and crash the ``int()`` on the way past it).
+            f"{money(_summary(stats, 'unique'))} characters · {money(_summary(stats, 'value'))} 🪙",
         ],
         ["summons", f"{money(stats.pulls)} ({money(stats.high_pulls)} high-tier)"],
         ["streak", f"{stats.streak} 🔥 (best {stats.best_streak})"],
@@ -121,6 +125,15 @@ async def send_profile(
         await edit(event, ctx, builder=builder, html=html)
     else:
         await card(event, ctx, builder=builder, html=html, buttons=buttons)
+
+
+def _summary(stats: Any, key: str) -> int:
+    """One number out of the collection summary, tolerating a service that returned nothing."""
+    data = getattr(stats, "collection", None) or {}
+    try:
+        return int(data.get(key) or 0)
+    except (TypeError, ValueError):  # pragma: no cover - defensive against a dict-shaped value
+        return 0
 
 
 def _plain(title: str, rows: list[list[str]]) -> str:
@@ -314,3 +327,139 @@ async def rob_from_profile(
         attacker=access.user_id,
         args=Args(raw=str(target), words=(str(target),)),
     )
+
+
+# ------------------------------------------------------------------ profile card
+#
+# The reference drew this in ``plugins/profile.py`` with blocking ``requests`` for fonts and
+# portraits, synchronously, on the event loop, for every viewer. Same canvas (1000×540), same
+# rarity ring and pill badge, three things fixed: the drawing runs in a worker thread, the
+# result is cached on disk by a hash of the numbers behind it, and the portrait comes from the
+# player's own Telegram photo or an allow-listed host. Two toggles live on the card itself, and
+# the 2026 button fields (``copy_text``, ``style``, inline switch) are used where the API server
+# supports them and skipped where it does not.
+
+
+@router.message(Command("pcard", "card", "profilecard"))
+async def pcard(
+    message: Message,
+    ctx: AppContext,
+    session: Any,
+    command: CommandObject,
+    access: Access,
+) -> None:
+    """``/pcard [@player]`` — the image card, not the text sheet."""
+    args = Args.of(command)
+    target = await resolve_user(session, message, args.raw) or access.user_id
+    await send_pcard(message, ctx, session, target=target, viewer=access.user_id)
+
+
+async def send_pcard(
+    event: Message | CallbackQuery,
+    ctx: AppContext,
+    session: Any,
+    *,
+    target: int,
+    viewer: int,
+    glow: bool | None = None,
+) -> None:
+    """Render + send. Falls back to the text profile when Pillow is missing, so the command
+    is never a hard error on a slim install."""
+    from aiogram.types import InlineKeyboardButton
+
+    from waifu.db.repositories import users as user_repo
+    from waifu.tg.messages import style_button
+
+    if await user_repo.get(session, target) is None:
+        await _respond(event, ctx, "No such player (they have never sent /start here).")
+        return
+    art = await ctx.cards.profile_art(session, target, viewer=viewer, force_glow=glow)
+    path = await ctx.cards.render_profile_async(art) if ctx.cards.available else None
+    if path is None:
+        await send_profile(event, ctx, session, target=target, viewer=viewer)
+        await note(event, "Image cards need Pillow on the host — showing the text card.")
+        return
+
+    caption = _card_caption(art)
+    buttons: list[list[Any]] = [
+        [
+            style_button(
+                f"🔆 glow {'on' if art.glow else 'off'}",
+                callback_data=cb("pc", "glow", str(target), "0" if art.glow else "1"),
+                disabled=viewer != target,
+            ),
+            style_button(
+                "🖼 portrait" if art.portrait_source != "avatar" else "👤 portrait",
+                callback_data=cb("pc", "src", str(target)),
+                disabled=viewer != target,
+            ),
+        ],
+        [
+            InlineKeyboardButton(text="🔎 their harem", switch_inline_query=f"collection.{target}"),
+            style_button(
+                "📋 copy handle",
+                copy_text=f"@{art.handle.lstrip('@')}" if art.handle else str(target),
+            ),
+        ],
+    ]
+    if viewer != target:
+        buttons.append([callback("🎁 gift", cb("gift", "to", str(target)))])
+    await card(event, ctx, html=caption, photo=str(path), buttons=buttons)
+
+
+def _card_caption(art: Any) -> str:
+    """The same numbers, as text — so a forwarded caption is still readable."""
+    from waifu.utils.text import esc
+
+    lines = [f"<b>{esc(art.name)}</b>"]
+    if art.handle:
+        lines.append(f"<i>{esc(art.handle)}</i>")
+    lines.append(
+        f"coins <b>{esc(art.balance)}</b> · level {art.level} · {art.exp}/{art.exp_span} xp"
+    )
+    harem = f"{art.harem}" + (f"/{art.roster}" if art.roster else "")
+    lines.append(
+        f"harem <b>{harem}</b> · value {esc(art.value)} 🪙 · {art.summons} summons ({art.high_rate}% high)"
+    )
+    lines.append(f"streak {art.streak}🔥 (best {art.best_streak}) · badges {art.badges}")
+    if art.featured:
+        lines.append(f"featured <b>{esc(art.featured)}</b> · {esc(art.rarity_label)}")
+    if art.total_players:
+        lines.append(f"rank #{art.rank} of {art.total_players} by coins")
+    if art.footer:
+        lines.append(esc(art.footer))
+    return "\n".join(lines)
+
+
+@router.callback_query(F.data.startswith("pc:"))
+async def pcard_toggle(
+    callback_query: CallbackQuery, ctx: AppContext, session: Any, access: Access
+) -> None:
+    """⭳ glow / portrait toggles: write the pref, re-render, send the new card."""
+    parts = split_cb(callback_query.data)
+    if len(parts) < 3:
+        await callback_query.answer()
+        return
+    _prefix, action, target_raw = parts[0], parts[1], parts[2]
+    target = int(target_raw or 0)
+    if not target or target != access.user_id:
+        await note(callback_query, "Only the owner of a card can change it.", alert=True)
+        return
+    from waifu.db.repositories import users as user_repo
+
+    if action == "glow":
+        wanted = parts[3] == "1" if len(parts) > 3 else None
+        await user_repo.set_pref(session, target, glow=bool(wanted))
+        await note(callback_query, "profile glow ✨ on" if wanted else "profile glow off")
+    elif action == "src":
+        pref = await user_repo.prefs(session, target)
+        flags = dict(pref.flags or {})
+        next_value = "avatar" if str(flags.get("card_portrait") or "art") == "art" else "art"
+        await user_repo.set_pref(session, target, card_portrait=next_value)
+        await note(callback_query, f"portrait source: {next_value}")
+    else:
+        await callback_query.answer()
+        return
+    if callback_query.message is None:
+        return
+    await send_pcard(callback_query, ctx, session, target=target, viewer=target)

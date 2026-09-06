@@ -105,6 +105,7 @@ HELP_TOPICS: dict[str, tuple[tuple[str, str], ...]] = {
         ("/streak", "your daily streak and its multiplier"),
         ("/achievements", "badges and progress"),
         ("/profile [player]", "someone's card, as others see it"),
+        ("/pcard [player]", "the drawn card: rarity ring, glow, shareable"),
     ),
     "settings": (
         ("/settings", "collection mode, glow, privacy"),
@@ -130,6 +131,8 @@ HELP_TOPICS: dict[str, tuple[tuple[str, str], ...]] = {
         ("/setchance <tier> <pct>", "edit the pull ladder"),
         ("/chancelist", "both ladders, with prices"),
         ("/reseed", "load the optional reference catalogue"),
+        ("/gate [on|off]", "quiz joiners in a DM before they reach the group"),
+        ("/gatelink", "an invite that routes people through that quiz"),
     ),
 }
 #: "more" is generated at render time from the wired routers (see :func:`send_help`).

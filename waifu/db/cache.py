@@ -87,21 +87,32 @@ class Cache:
         await self._local.clear()
 
     # ------------------------------------------------------------------- keys
-    def _key(self, namespace: str, *parts: str | int) -> str:
-        return f"{self._prefix}:c:{self._version(namespace)}:{namespace}:{':'.join(str(p) for p in parts)}"
+    def _ver_key(self, namespace: str) -> str:
+        return f"{self._prefix}:c:ver:{namespace}"
+
+    async def _key(self, namespace: str, *parts: str | int) -> str:
+        """The full key, *awaiting* the namespace version.
+
+        This used to be a synchronous ``f-string`` that interpolated ``self._version(...)`` —
+        a coroutine object — so every generated key was unique per call: reads never hit,
+        ``invalidate`` bumped a version nothing consulted, and the whole cache degraded to a
+        write-only store. The async signature is the fix; :mod:`tests.test_cache` is the tripwire.
+        """
+        version = await self._version(namespace)
+        return f"{self._prefix}:c:{version}:{namespace}:{':'.join(str(p) for p in parts)}"
 
     async def _version(self, namespace: str) -> int:
         if namespace in self._versions:
             return self._versions[namespace]
         version = 0
         if self._redis is not None:
-            raw = await self._redis.get(f"c:ver:{namespace}")
+            raw = await self._redis.get(self._ver_key(namespace))
             version = int(raw) if raw and str(raw).isdigit() else 0
         self._versions[namespace] = version
         return version
 
     async def get(self, namespace: str, *parts: str | int) -> Any:
-        key = self._key(namespace, *parts)
+        key = await self._key(namespace, *parts)
         if self._redis is not None:
             raw = await self._redis.get(key)
             if raw is not None:
@@ -115,7 +126,7 @@ class Cache:
     async def set(
         self, namespace: str, key_parts: tuple[str | int, ...], value: Any, ttl: int
     ) -> None:
-        full = self._key(namespace, *key_parts)
+        full = await self._key(namespace, *key_parts)
         if self._redis is not None:
             await self._redis.set(full, json.dumps(value, default=str, separators=(",", ":")), ttl)
             return
@@ -139,7 +150,7 @@ class Cache:
         return value
 
     async def delete(self, namespace: str, *parts: str | int) -> None:
-        key = self._key(namespace, *parts)
+        key = await self._key(namespace, *parts)
         if self._redis is not None:
             await self._redis.delete(key)
             return
@@ -150,7 +161,7 @@ class Cache:
         version = await self._version(namespace) + 1
         self._versions[namespace] = version
         if self._redis is not None:
-            await self._redis.set(f"c:ver:{namespace}", str(version), None)
+            await self._redis.set(self._ver_key(namespace), str(version), None)
         else:
             for key in await self._local.keys_with_prefix(
                 f"{self._prefix}:c:{version - 1}:{namespace}"

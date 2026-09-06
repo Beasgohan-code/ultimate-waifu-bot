@@ -268,6 +268,11 @@ class Settings(BaseSettings):
     features: FeatureFlags = Field(default_factory=FeatureFlags)
     default_locale: str = "en"
     timezone: str = "Asia/Kolkata"
+    #: How cards are delivered. ``auto`` probes the API server once at startup and uses rich
+    #: blocks when it supports them, the caption fallback when it does not; ``rich``/``plain``
+    #: force one shape; ``off`` disables cards for every chat (the per-group override lives on the
+    #: Group row and wins when set). Invalid values fall back to ``auto``, never a crash.
+    chat_mode: str = "auto"
     daily_reset_hour: int = 0
     log_level: str = "INFO"
     log_json: bool = False

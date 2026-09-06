@@ -40,6 +40,7 @@ from waifu.plugins._kit import (
     shorten,
     text,
 )
+from waifu.utils.chats import is_group
 from waifu.utils.time import human_delta
 
 if TYPE_CHECKING:  # pragma: no cover
@@ -86,7 +87,7 @@ async def auction(
             start_price=max(1, int(start)),
             minutes=minutes,
             reserve_price=reserve,
-            chat_id=message.chat.id if not message.chat.is_private else None,
+            chat_id=message.chat.id if is_group(message.chat) else None,
         )
     except (NotFound, Locked, WaifuError) as exc:
         await refuse(message, exc.user_message)

@@ -29,11 +29,50 @@ degrades and a bot that 500s in every group.
 | Per-scope command menu (`setMyCommands`, `BotCommandScopeChatAdmins`) | `waifu/core/bot.py`, `waifu/core/dp.py::command_menu` | the ⊞ menu, generated from the routers at startup | the menu is simply what BotFather set |
 | Mini App entry point (`setChatMenuButton`, `WebAppInfo`) | `waifu/tg/stories.py`, `waifu/plugins/webapp.py` | `/webapp` for searchable roster browsing | `/chars` + `/collection` paging |
 | `date_time` entities, custom emoji in bot messages | `waifu/tg/text.py` | timers, claim windows, cooldowns render in the reader's own timezone | absolute UTC + a "your time" line |
+| Join requests (`createChatInviteLink(creates_join_request=True)`, `approveChatJoinRequest` / `declineChatJoinRequest(reason)`) | `waifu/plugins/moderation.py` | `/gate` + `/gatelink` — a joiner answers one question about the roster in a DM before the group is unlocked | the switch is off by default, so an un-armed group behaves exactly as before |
+| Button fields: `copy_text`, `style`, `disabled`, `icon_custom_emoji_id` | `waifu/tg/messages.py::style_button` | `/pcard` — copy the handle without selecting text; an owner's toggles arrive greyed out for everyone else instead of failing on tap | unknown fields are dropped and the button stays a normal callback button |
+| `switch_inline_query` on a card button | `waifu/plugins/players.py` + `waifu/plugins/inline.py` | "their harem" opens inline mode in the current chat, prefilled with `collection.<id>` | the callback pager (`/check`) does the same job in-thread |
+| `getUserProfilePhotos` + `download` as card art | `waifu/services/cards.py` | a profile whose favourite has no art gets the player's own photo instead of a grey box | initials tile, drawn locally |
 
 Two things that are **not** here, deliberately: reactions as a payment signal (Telegram
 does not attribute them precisely enough to move coins) and voice transcription (an
 inbound-audio feature that needs a second model behind it — see the roadmap in
 `docs/ROADMAP.md` if you want to add it).
+
+## The gap the porting found
+
+`chat_join_request` has been in this bot's `allowed_updates` since the first commit, and no
+handler anywhere answered it. Nothing visibly broke — that is the shape this class of bug takes:
+the update arrives, is dispatched to nobody, and a group that turned on "request admin approval"
+watches applicants pile up in a queue the bot pretends not to see.
+
+The fix is `/gate`, and it is deliberately *not* a captcha. It asks the joiner to pick the right
+character out of four drawn from this deployment's own roster, which prices out a spam farm (each
+account needs a human who has read the group's list) while costing a real player one tap. Three
+details carry the design: the question bank is cached per group for an hour, because `ORDER BY
+random()` per applicant is how a security feature becomes a load incident; the correct index is
+drawn per pool, because a button that is always top-left is not a question; and every failure to
+ask — no roster, a blocked DM, a crash in our own code — ends in a decision, not a hung request.
+
+## What reproducing a card taught us
+
+Porting the reference's `plugins/profile.py` line by line meant drawing it through this repo's own
+send path, which surfaced four bugs no test had reached because every test stopped at the service
+layer:
+
+* `mode_of()` returned `ChatMode.HTML` — a member the enum never had — so **every** non-rich reply
+  raised `AttributeError` instead of degrading to a caption;
+* twelve handlers read `Chat.is_private`, removed in aiogram 3.7, so a group-only guard was a
+  crash; `waifu/utils/chats.py` now owns that predicate and a grep test keeps it that way;
+* `Cache._key` interpolated an un-awaited coroutine into the key, so every read missed, every
+  write was orphaned, and `invalidate()` bumped a version nobody consulted — the group settings
+  cache and `/hstats` had been running as a write-only store;
+* `/profile` handed the collection summary *dict* to `money()`, so the harem row raised instead of
+  printing.
+
+All four have tests now (`tests/test_send_paths.py`, `tests/test_cache.py`,
+`tests/test_profile_card.py`), which is the actual lesson: a capability check you never call is not
+a feature, and a helper only used by handlers is untested until a port forces you to call it.
 
 ## Why not python-telegram-bot
 

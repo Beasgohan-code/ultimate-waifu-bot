@@ -22,6 +22,7 @@ from aiogram.types import ErrorEvent
 from waifu.core.context import AppContext
 from waifu.logging import get_logger
 from waifu.settings import Settings
+from waifu.utils.chats import is_group
 
 log = get_logger("core.dp")
 
@@ -167,7 +168,7 @@ async def on_error(event: ErrorEvent, ctx: AppContext, settings: Settings) -> No
     if isinstance(exc, TelegramForbiddenError):
         # Bot kicked from the group or DM closed: normal lifecycle, not a bug.
         log.info("%s: bot blocked/kicked in chat %s", handler, chat.id if chat else "?")
-        if chat and not chat.is_private and ctx.moderation:
+        if chat and is_group(chat) and ctx.moderation:
             await ctx.moderation.mark_unavailable(chat.id)
         return
     if isinstance(exc, TelegramAPIError):

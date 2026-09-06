@@ -29,6 +29,7 @@ from waifu.plugins._kit import (
     refuse,
     text,
 )
+from waifu.utils.chats import is_private
 
 if TYPE_CHECKING:  # pragma: no cover
     from waifu.core.access import Access
@@ -191,7 +192,7 @@ async def summon(
 
 
 async def _is_group_owner(ctx: AppContext, session: Any, message: Message) -> bool:
-    if message.chat.is_private:
+    if is_private(message.chat):
         return False
     return bool(
         message.from_user and message.is_sender_admin
@@ -205,7 +206,7 @@ async def autospan(
     message: Message, ctx: AppContext, session: Any, command: CommandObject, access: Access
 ) -> None:
     """/autospan on|off · /autospan limit 250 — this group's feed settings."""
-    if message.chat.is_private:
+    if is_private(message.chat):
         await text(message, ctx, "The spawn feed is a group feature — run this in the group.")
         return
     if not (access.is_staff or access.is_group_admin):

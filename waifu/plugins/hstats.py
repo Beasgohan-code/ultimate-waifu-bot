@@ -27,6 +27,7 @@ from waifu.plugins._kit import (
     money,
     text,
 )
+from waifu.utils.chats import is_private
 
 if TYPE_CHECKING:  # pragma: no cover
     from waifu.core.access import Access
@@ -37,7 +38,7 @@ router = Router(name="hstats")
 
 @router.message(Command("hstats", "hs"))
 async def hstats(message: Message, ctx: AppContext, session: Any) -> None:
-    if message.chat.is_private:
+    if is_private(message.chat):
         await text(message, ctx, "h-stats is per-group — run /hstats in a group.")
         return
     stats = await ctx.hstats.group(session, message.chat.id)
@@ -162,7 +163,7 @@ async def hnote(
     """A pinned one-liner under /hstats (group owners asked for "rules here")."""
     from waifu.plugins._kit import Args
 
-    if message.chat.is_private:
+    if is_private(message.chat):
         await text(message, ctx, "notes are per group")
         return
     if not (access.is_group_admin or access.is_staff):

@@ -47,8 +47,19 @@ _USER_TOKEN = re.compile(r"^(?:@?(?P<username>[A-Za-z][A-Za-z0-9_]{3,31})|(?P<id
 
 # --------------------------------------------------------------------- rendering
 def mode_of(ctx: AppContext) -> ChatMode:
-    """Rich messages when the server supports them, HTML otherwise."""
-    return ChatMode.RICH if ctx.wants("rich_messages") else ChatMode.HTML
+    """Rich messages when the API server supports them, the caption fallback otherwise.
+
+    ``ChatMode.HTML`` does not exist — the enum is ``OFF/RICH/PLAIN/AUTO``. Referring to it here
+    was an ``AttributeError`` on *every* send that was not a rich message, which no test caught
+    because the handlers under test stopped at the service layer. :mod:`tests.test_send_paths`
+    now drives these helpers end to end, and
+    a repo-wide grep keeps an invented member from coming back.
+    """
+    caps = getattr(ctx, "caps", None)
+    if caps is not None and hasattr(caps, "card_mode"):
+        # The deployment's setting wins, the capability decides what it can actually mean.
+        return caps.card_mode(ctx.settings.chat_mode, settings=ctx.settings)
+    return ChatMode.RICH if ctx.wants("rich_messages") else ChatMode.PLAIN
 
 
 async def card(

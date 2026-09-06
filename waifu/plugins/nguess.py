@@ -37,6 +37,7 @@ from waifu.plugins._kit import (
     staff_of,
     text,
 )
+from waifu.utils.chats import is_private
 
 if TYPE_CHECKING:  # pragma: no cover
     from waifu.core.access import Access
@@ -50,7 +51,7 @@ async def nguess(
     message: Message, ctx: AppContext, session: Any, command: CommandObject, access: Access
 ) -> None:
     """/nguess [seconds] [rarity] — start a round in this group."""
-    if message.chat.is_private:
+    if is_private(message.chat):
         await text(
             message,
             ctx,

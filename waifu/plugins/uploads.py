@@ -408,7 +408,7 @@ async def ingest(
     # ``/chars`` and the pull pools read a 30-second character cache with no invalidation
     # hook on insert, so a roster that was empty when it was first viewed would stay empty
     # for half a minute — long enough for "I added it and it's not there" ticket.
-    await ctx.cache.invalidate("char:*")
+    await ctx.cache.invalidate("catalogue")  # the namespace the reads use
 
     await post_to_log_channel(ctx, source, char=char, ref=ref, event=event)
     return entry

@@ -360,9 +360,38 @@ class LedgerReason(StrEnum):
 
 
 class ChatMode(StrEnum):
+    """How a card is delivered: rich blocks, the caption fallback, or plain text.
+
+    ``AUTO`` is the shipped default and the only value worth configuring: the bot then asks the
+    API server what it supports (see :meth:`waifu.tg.caps.Capabilities.card_mode`). ``OFF`` is a
+    per-group request — a story group that wants text only, no photo spam.
+    """
+
+    AUTO = "auto"
     OFF = "off"
     RICH = "rich"
     PLAIN = "plain"
+
+    @classmethod
+    def from_value(cls, value: object) -> ChatMode:
+        """Tolerant parse: a typo or an unset value means AUTO, never a crash.
+
+        A setting that can raise is a setting that takes the bot down at startup, so the
+        resolution rules ("", "Auto", "html"→PLAIN, unknown→AUTO) live here rather than in
+        whichever call site happened to remember to guard.
+        """
+        if isinstance(value, cls):
+            return value
+        raw = str(value or "").strip().lower()
+        if raw in {"", "auto", "default"}:
+            return cls.AUTO
+        if raw in {"off", "text", "none", "disabled"}:
+            return cls.OFF
+        if raw in {"rich", "2026", "blocks"}:
+            return cls.RICH
+        if raw in {"plain", "html", "caption", "photo"}:
+            return cls.PLAIN
+        return cls.AUTO
 
 
 class TradeStatus(StrEnum):

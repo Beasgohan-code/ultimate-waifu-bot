@@ -52,6 +52,28 @@ verified-URL ingestion through `/add` and `/update`, allow-listed to `files.catb
 enforced by `waifu/tg/media.py` before anything is ever fetched). The roster still starts
 empty either way: both doors are admin-only, and nothing ships a character.
 
+### Beyond the reference (additions, not ports)
+
+Two rows of this audit are about work that has *no* counterpart upstream, recorded here so
+the table cannot be read as a claim that everything new is a port:
+
+* **``/gate`` — the join-request quiz.** ``waifu/plugins/moderation.py`` handles
+  ``chat_join_request``, an update this bot has subscribed to since the first commit and that
+  nothing answered; Summon-bot predates ``createChatInviteLink(creates_join_request=True)``.
+  A joiner is asked, in a DM, to pick the right character out of four drawn from *this*
+  deployment's own roster (the pool is cached per group for an hour, the answer index is
+  randomised, three tries, then declined with a reason). State lives in the Redis/local cache,
+  so the feature needed no migration; an empty roster auto-approves rather than locking a group
+  out, and so does any failure to ask.
+* **The four bugs the porting exposed.** Reproducing ``plugins/profile.py`` line by line meant
+  drawing the same card through this repo's own send path, which is how these surfaced and why
+  each now has a test: ``_kit.mode_of`` returned ``ChatMode.HTML``, a member that has never
+  existed, so every non-rich reply raised; ``Chat.is_private`` (removed in aiogram 3.7) was
+  read in twelve handlers, now ``waifu/utils/chats.py``; ``Cache._key`` interpolated an un-awaited
+  coroutine, so no cached read ever hit and ``invalidate`` was a no-op; and ``/profile`` passed
+  the summary *dict* to ``money()``, crashing the harem row. See ``tests/test_send_paths.py``,
+  ``tests/test_cache.py`` and ``tests/test_profile_card.py``.
+
 **29 modules**, **313 functions**,
 **30 functions present only in bytecode** (i.e. deleted from the source tree).
 
@@ -617,14 +639,14 @@ claim is one `git grep` away from being checked.
 | `migrate_character_media_to_urls` | superseded | `waifu/services/cards.py`, `waifu/plugins/uploads.py` | The reference's one-way migration *away* from file_ids. This bot runs the useful half in both directions: ``/archiveart <id|missing>`` re-hosts hotlinked art into a permanent file_id, and the host buttons offer the URL back out. No offline script needed. |
 | `migrate_sqlite_to_postgres` | ported | `scripts/import_summon.py`, `waifu/__main__.py` | Table-by-table copy with type/name mapping (``characters.id`` text -> integer, ``msg_id`` -> typed columns) -> ``python -m waifu import-legacy <summon.db>``; it reads the same columns and reports what it could not carry instead of guessing. |
 | `nguess` | ported | `waifu/plugins/nguess.py`, `waifu/services/spawn.py` | ``nguess_cmd``/``handle_guess``/``new_session``/``nguess_end``/``send_character``/``react_to_message``/``add_coins``/``ensure_user``/``db_query``/``get_random_character``/``get_fresh_character``/``nguess_dm_block``/``async_react`` -> ``/nguess`` with ``/ngpoll``, ``/ngskip``, ``/ngstats``, ``/ngtop``. DM spam is blocked by the same rule (privacy gate), votes are a poll + reaction tally. |
-| `profile` | adapted | `waifu/services/cards.py`, `waifu/plugins/players.py` | PIL profile art (glow rect, rarity badge/ring, ``smart_truncate``, font loading/download) -> ``CardRenderer`` (fonts from ``data/fonts`` with a documented fallback) + ``/profile``, ``/glow``, ``/bio``. Rendering is cached by content signature, and a font-less install still shows a card instead of crashing. |
+| `profile` | ported | `waifu/services/cards.py`, `waifu/plugins/players.py`, `tests/test_profile_card.py` | ``plugins/profile.py`` (516 lines: gradient canvas, ``draw_glow_rect``, ``draw_rarity_ring``, ``draw_rarity_badge`` with its gold star, ``smart_truncate``, ``progress_bar``) -> ``ProfileArt`` + ``ProfileCardMixin`` + ``/pcard`` (aliases ``/card``, ``/profilecard``). The visual grammar is reproduced at the same 1000x540; what changed is the machinery: fonts are fetched once on demand instead of with blocking ``requests`` at import, the draw runs in a worker thread, the PNG is cached by a signature derived from every field the card prints, the portrait respects the media-host allow list (the reference fetched ``img_url`` blindly), and ``show_balance`` masks the number before rendering so a cached card cannot leak it to the wrong viewer. ``/glow``, ``/bio`` and the ``card_portrait`` flag ride along as prefs. |
 | `smoke_test` | superseded | `tests` | Import-and-send smoke checks -> 200-test pytest suite plus ``python -m waifu doctor`` for the live bot. |
 | `storage` | adapted | `waifu/db/engine.py`, `waifu/db/repositories`, `waifu/settings.py` | The ``?``->``%s`` SQL translator, ``_is_table_info_query``, ``_normalise_value`` and ``using_postgres`` exist only because the reference hand-wrote SQL against two backends; SQLAlchemy removes the class of problem, so the port is 'no equivalent code', and ``configure()``/``connect()`` map onto settings + ``Database.from_settings`` with ``async with db.tx()`` as the savepoint door the middleware uses per update. |
 | `supervisor` | ported | `deploy/supervisor.py`, `deploy/summon-bot.service.example`, `docker-compose.yml` | Crash-restart loop with the same AUTO_RESTART_MINUTES default (0 = never recycle on a timer), the same SIGTERM/SIGINT handling and 30s grace for the child. Added: N quick failures in a row stop the supervisor with the child's code, because the reference restarted forever and turned a bad DATABASE_URL into an endless chain of identical tracebacks. deploy/summon-bot.service.example wires it to systemd. |
 | `test_bootstrap_postgres` | superseded | `tests/test_catalogue_seed.py` | Reference-side test of the bootstrap guard. |
 | `test_storage_savepoints` | superseded | `tests/test_gameplay_flows.py` | Reference-side test of savepoint behaviour in the SQLite/Postgres shim. |
 
-**Totals:** adapted 5 · ported 16 · superseded 7 · tooling 1 across 29 modules.
+**Totals:** adapted 4 · ported 17 · superseded 7 · tooling 1 across 29 modules.
 
 ## Reference database schema (`summon.db`)
 

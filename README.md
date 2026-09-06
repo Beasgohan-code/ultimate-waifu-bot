@@ -105,6 +105,38 @@ startup (`waifu/tg/caps.py`) and each renderer picks the plain path when the ser
 not have them — so an instance on a self-hosted API server of last year loses formatting,
 not functionality. Details: [docs/NEW_BOT_API.md](docs/NEW_BOT_API.md).
 
+## Advanced: what the porting turned into
+
+Two things here came from reading the reference deployment rather than its command list —
+`docs/SUMMON_EXTRACT.md` records which is which.
+
+**`/pcard` — the drawn profile card.** The reference's `plugins/profile.py` produced the one
+image people actually forwarded: a 1000×540 gradient canvas, the favourite's portrait inside a
+rarity-coloured ring, a pill badge with a gold star for the tiers that earned one, a glow rect for
+premium players. Same visual grammar here, four things fixed: fonts are fetched once on demand
+instead of with blocking `requests` at import time, drawing runs in a worker thread instead of on
+the event loop, the PNG is cached by a signature derived from *every* field the card prints, and
+the portrait only ever comes from a stored `file_id`, an allow-listed host, or the player's own
+Telegram photo. `show_balance` masks the number *before* rendering, which is what stops a cached
+card from leaking it to the wrong viewer. The card carries its own controls (glow, portrait source,
+copy-handle, inline collection switch), and an install without Pillow degrades to the text profile
+instead of failing.
+
+**`/gate` — the join-request quiz.** `chat_join_request` was in this bot's subscribed updates from
+the first commit and answered by nobody; the reference predates `creates_join_request` entirely.
+A group admin runs `/gate on`, mints an invite with `/gatelink` (the flag that generates the update
+is set by the bot, since a link without it silently bypasses the gate), and each applicant gets one
+question in a DM: pick the right character out of four drawn from *this deployment's* roster. Three
+tries, then declined with a reason. The question bank is cached per group for an hour, the correct
+index is randomised per pool, and every failure to ask — empty roster, blocked DM, a crash in our
+own code — ends in a decision rather than a request hanging forever. State lives in the cache, so
+the feature needed no migration.
+
+Both are documented with their reasoning in
+[docs/NEW_BOT_API.md](docs/NEW_BOT_API.md), which also lists four bugs this pass exposed in
+`/profile`'s own send path (`ChatMode.HTML`, aiogram's removed `Chat.is_private`, a cache key built
+from an un-awaited coroutine, a dict passed to `money()`), each now covered by a test.
+
 ## Mini-app JSON API
 
 `python -m waifu api` serves the front-end contract the reference deployment's `api.py` had —

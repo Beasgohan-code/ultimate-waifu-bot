@@ -15,7 +15,7 @@ Two rules the code follows and this file reflects:
   where they collide with nothing, so muscle memory from the old bot keeps working.
 
 
-**141 commands across 23 plugins (31 routers registered — the extra ones render no commands: inline mode, the autoadd feed, member/reaction/poll updates).**
+**144 commands across 23 plugins (31 routers registered — the extra ones render no commands: inline mode, the autoadd feed, member/reaction/poll updates).**
 
 ## `misc.py`
 
@@ -39,6 +39,7 @@ Two rules the code follows and this file reflects:
 | `/bio` | /bio <text> sets the line under your name (their bot had no bio at all). |
 | `/glow` | Their /profileglow: the name banner on your card. Off by default. |
 | `/lvl` | — |
+| `/pcard` | the image card, not the text sheet. |
 | `/privacy` | — |
 | `/profile` | — |
 | `/register` | it is a no-op if |
@@ -223,6 +224,8 @@ Two rules the code follows and this file reflects:
 | `/banlist` | — |
 | `/case` | — |
 | `/clearwarns` | — |
+| `/gate` | quiz joiners in a DM before they reach the group. |
+| `/gatelink` | a single-use invite with approval requests forced on. |
 | `/gban` | — |
 | `/groupsettings` | per-group knobs. |
 | `/mute` | — |

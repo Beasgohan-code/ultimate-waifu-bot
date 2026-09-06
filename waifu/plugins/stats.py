@@ -31,6 +31,7 @@ from waifu.plugins._kit import (
     pager_row,
     text,
 )
+from waifu.utils.chats import is_private
 
 if TYPE_CHECKING:  # pragma: no cover
     from waifu.core.access import Access
@@ -156,7 +157,7 @@ async def server(
             html="\n".join(f"{row[0]}: {row[1]}" for row in table),
         )
         return
-    if message.chat.is_private:
+    if is_private(message.chat):
         await text(
             message,
             ctx,
