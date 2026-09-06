@@ -15,7 +15,7 @@ Two rules the code follows and this file reflects:
   where they collide with nothing, so muscle memory from the old bot keeps working.
 
 
-**136 commands across 22 plugins.**
+**141 commands across 23 plugins.**
 
 ## `misc.py`
 
@@ -56,9 +56,19 @@ Two rules the code follows and this file reflects:
 | `/delchar` | — |
 | `/hidechar` | Deactivate instead of delete: keeps history intact, stops future drops. |
 | `/media` | store the bot's own file_id. |
-| `/reseed` | for a DB that predates the shipped roster. |
+| `/reseed` | Load the optional catalogue into an empty roster (idempotent, name+series deduped). |
 | `/setchance` | /setchance Legendary 6.2 (and --claim for the free-claim table). |
 | `/setclaim` | the claim ladder only (gacha rates: /setchance). |
+
+## `uploads.py`
+
+| command | description |
+| --- | --- |
+| `/archiveart` | re-host art into a permanent file_id. |
+| `/autoadd` | this chat's media feed in, without a command per character. |
+| `/rosterstats` | per-tier counts plus what ingestion still has open. |
+| `/upload` | creates the character. |
+| `/uploads` | which characters are still waiting for a host choice. |
 
 ## `gacha.py`
 

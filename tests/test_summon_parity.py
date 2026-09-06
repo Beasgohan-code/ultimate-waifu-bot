@@ -138,7 +138,7 @@ SUMMON_COMMANDS: dict[str, str] = {
     "setchance": "edit drop ladder",
     "banner": "banner characters",
     "media": "attach art",
-    "upload": "alias",
+    "upload": "reply to media → creates the character",
     "reseed": "re-roll seeds",
 }
 

@@ -255,7 +255,9 @@ class Settings(BaseSettings):
     card_width: int = 900
     media_base_url: str = ""
     font_path: str = ""
-    allowed_media_hosts: list[str] = Field(default_factory=lambda: ["api.telegram.org"])
+    allowed_media_hosts: list[str] = Field(
+        default_factory=lambda: ["api.telegram.org", "files.catbox.moe", "i.ibb.co", "catbox.moe"]
+    )
     enable_outbound_media: bool = True
     # Rich messages need the *file_id* of the photo; this controls whether the bot
     # caches file_ids for URL-hosted art on first send (recommended: yes).
@@ -275,6 +277,25 @@ class Settings(BaseSettings):
     #: file_id (``/archiveart`` uses this; leave 0 to disable archiving).
     media_archive_chat_id: int = 0
     log_channel_id: int = 0
+
+    # --- Roster ingestion -----------------------------------------------------
+    #: A fresh install ships an **empty** character database, exactly like the
+    #: reference deployment: its ``summon.db`` contained one row because *admins added
+    #: characters at runtime*, not because the code shipped a list. ``waifu migrate``
+    #: therefore writes the tier ladder and prices (configuration) and nothing else.
+    #: Set ``SEED_CATALOGUE=1`` to also load ``waifu/data/characters.seed.json`` — the
+    #: optional 177-entry catalogue — on migrate/seed, or use ``/upload``/``waifu seed
+    #: --catalogue``/``waifu import-legacy`` when you want the roster built your way.
+    seed_catalogue: bool = False
+    #: Where ``/upload`` parks the downloaded media until the admin chooses a web host
+    #: (the reference bot hard-coded ``~/summon-bot/uploads``).
+    upload_dir: Path = Path("./data/uploads")
+    #: ImgBB needs an API key; Catbox is anonymous, so it is always offered. Both are
+    #: only reachable by the owner through the ``/upload`` receipt buttons.
+    imgbb_api_key: str = ""
+    #: Post every ingested character (media + caption) to ``LOG_CHANNEL_ID`` so the
+    #: channel stays the archive the DB was rebuilt from, as in the reference bot.
+    upload_to_log_channel: bool = True
 
     # -------------------------------------------------------------- validators
     @field_validator("bot_token")

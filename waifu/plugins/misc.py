@@ -113,6 +113,24 @@ HELP_TOPICS: dict[str, tuple[tuple[str, str], ...]] = {
         ("/language [code]", "interface language"),
         ("/premium", "what premium does and what it costs"),
     ),
+    # The staff page exists because the roster story is unusual here: a fresh install has no
+    # characters, and the *only* way in is Telegram. A generated "more" page is where the
+    # leftovers used to land, which made "/upload" impossible to find for exactly the
+    # person who had to run it first.
+    "admin": (
+        ("/upload <name> <series> <1-18>", "reply to a photo/video/GIF — adds the character"),
+        ("/autoadd <on|off>", "ingest this group's captioned media without a command"),
+        ("/uploads", "uploads still waiting for a web host"),
+        ("/archiveart <id|missing>", "re-host URL art into a permanent file_id"),
+        ("/rosterstats", "per-tier counts and what ingestion has open"),
+        ("/chars [page|tier|text]", "browse the roster"),
+        ("/addchar <name> | <series> | <tier>", "add by hand, no media"),
+        ("/delchar <id>", "delete a character"),
+        ("/media <id>", "attach art to an existing character"),
+        ("/setchance <tier> <pct>", "edit the pull ladder"),
+        ("/chancelist", "both ladders, with prices"),
+        ("/reseed", "load the optional reference catalogue"),
+    ),
 }
 #: "more" is generated at render time from the wired routers (see :func:`send_help`).
 HELP_ORDER = (*tuple(HELP_TOPICS), "more")

@@ -16,9 +16,9 @@ degrades and a bot that 500s in every group.
 | --- | --- | --- | --- |
 | Rich messages (`SendRichMessage`, blocks + `RichToolbarButton`) | `waifu/tg/rich.py` | spawn cards, pull results, receipts, market/auction listings | `RichMessageBuilder.fallback_html()` — the same content as an HTML caption with an image |
 | Message drafts (`SendMessageDraft`, `can_stop`, `keep_on_stop`) | `waifu/tg/draft.py` | `/ai` answers, long `/market` listings, `/history` exports | one `send_message` with the finished text |
-| Ephemeral messages (`EphemeralMessageParameters`) | `waifu/tg/ephemeral.py` | per-player answers in busy groups (spoilers, hint reveals, "you lost" receipts) | a reply in-thread, deleted after the claim window |
+| Ephemeral messages (`EphemeralMessageParameters`) | `waifu/tg/ephemeral.py` | per-player answers in busy groups (spoilers, hint reveals, "you lost" receipts), the `/autoadd` ingest receipt | a reply in-thread, deleted after the claim window |
 | Checklists | `waifu/tg/checklist.py` | `/quests` (ticking a quest is the claim gesture; `ticked_task` entities are read back) | a table with ▰▰▱ progress bars |
-| Live photos, `sendPaidMedia`, albums | `waifu/tg/media.py`, `waifu/tg/paid.py` | character art (`/char`, pulls, `/media` upload accepts them as-is) | static photo, then the URL as caption |
+| Live photos, `sendPaidMedia`, albums | `waifu/tg/media.py`, `waifu/tg/paid.py` | character art (`/char`, pulls); `/upload` **files** a live photo with its motion instead of flattening it to a still | static photo, then the URL as caption |
 | Reactions (`setMessageReaction`, `message_reaction`) | `waifu/tg/interactions.py`, `waifu/plugins/misc.py` | high-tier pulls get 🔥🎉 instead of text spam; raffle entry counting | votes-only raffles |
 | Polls / quiz mode | `waifu/plugins/nguess.py` | `/ngpoll` — the guessing round in the native UI | `/nguess` typed-answer round |
 | Guest mode (`AnswerGuestQuery`) | `waifu/tg/guest.py`, `waifu/plugins/misc.py` | a chat the bot is not a member of can still `/pull` a preview | "add me to use this" (the invite CTA is real, not a deflection) |

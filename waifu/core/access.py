@@ -88,7 +88,11 @@ class Access:
 
 
 #: Permissions that even /admins do not get — owner-only, by design.
-OWNER_ONLY = frozenset({"broadcast_all", "set_odds_master", "wipe", "edit_owner"})
+#: ``edit_roster`` is here because the character catalogue is the product: the reference
+#: bot allowed only its owner to ``/upload`` characters, and a fresh install starts empty,
+#: so whoever can write it decides what every player pulls. A sudo admin can still be
+#: granted it explicitly (``/editsudo``), which is the point of a flag rather than a check.
+OWNER_ONLY = frozenset({"broadcast_all", "set_odds_master", "wipe", "edit_owner", "edit_roster"})
 
 
 def _denial_text(permission: str | None) -> str:

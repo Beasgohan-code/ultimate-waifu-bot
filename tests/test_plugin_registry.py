@@ -166,7 +166,10 @@ async def test_doctor_reports_a_healthy_database(ctx) -> None:
 
     async with ctx.db.tx() as session:
         totals = await char_repo.totals(session)
-    assert totals["characters"] > 100, "the shipped catalogue must be present, not a stub roster"
+    # The fixture opted into the catalogue (tests/conftest.py); production defaults to an
+    # empty roster that admins fill through /upload. Either way a registry that cannot
+    # count one is a registry with a broken cache/DB wiring.
+    assert totals["characters"] > 100, "the test roster must be visible through the services"
     assert totals["active"] > 100
     assert totals["series"] > 20
     assert totals["copies"] == 0, "a fresh database has no copies yet"

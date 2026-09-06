@@ -1,7 +1,11 @@
 # One place for the commands that must be identical locally and in CI. Summon-bot had a
 # Procfile, a run.sh and three ad-hoc asyncio.run entry points that each set the
 # environment differently — this file plus .github/workflows/ci.yml is the same list.
-PY ?= python
+#: Prefer the project venv when one exists (``make install`` creates it), so the same
+#: interpreter runs in CI, in a container and on a laptop that happens to have another
+#: Python first on PATH — "make check works for me" is not a check.
+VENV_PY := $(if $(wildcard .venv/bin/python),.venv/bin/python,)
+PY ?= $(or $(VENV_PY),python)
 UV ?= uv
 
 .PHONY: help install run test lint format docs check migrate seed doctor jobs import-legacy docker-build docker-up
@@ -32,11 +36,11 @@ docs:  ## regenerate docs/COMMANDS.md and docs/SUMMON_PARITY.md from the routers
 
 check: lint test  ## what CI runs
 
-migrate:  ## create/upgrade the schema and load the shipped catalogue
+migrate:  ## create/upgrade the schema + tier ladders (the roster is uploaded, not shipped)
 	$(PY) -m waifu migrate
 
-seed:  ## re-seed the tier ladder + roster (idempotent)
-	$(PY) -m waifu seed
+seed:  ## ladders, plus the optional catalogue with `make seed CATALOGUE=1`
+	$(PY) -m waifu seed $(if $(CATALOGUE),--catalogue,)
 
 doctor:  ## config + database + plugin-registration self-check
 	$(PY) -m waifu doctor

@@ -254,6 +254,41 @@ async def group(
     return row
 
 
+def _switches(row: Group) -> dict[str, bool]:
+    return dict((row.data or {}).get("switches") or {})
+
+
+async def set_group_switch(
+    session: AsyncSession, chat_id: int, key: str, *, value: bool, title: str = ""
+) -> dict[str, bool]:
+    """Flip a free-form per-group switch and return the whole set.
+
+    ``set_group_flags`` deliberately refuses unknown keys, because a typo in
+    ``/setgroup`` otherwise reads as "it didn't work". A switch with no column — the
+    auto-add feed — lives in ``Group.data`` instead of forcing a migration for a
+    boolean nobody queries.
+    """
+    row = await group(session, chat_id, create=True, title=title)
+    if row is None:  # pragma: no cover - create=True guarantees a row
+        raise NotFound("group row missing")
+    data = dict(row.data or {})
+    switches = _switches(row)
+    switches[str(key)] = bool(value)
+    data["switches"] = switches
+    row.data = data  # reassigned: JSON columns only persist a *new* object
+    await session.flush()
+    return switches
+
+
+async def group_switch(
+    session: AsyncSession, chat_id: int, key: str, *, default: bool = False
+) -> bool:
+    row = await session.get(Group, chat_id)
+    if row is None:
+        return default
+    return bool(_switches(row).get(key, default))
+
+
 async def bump_message_count(
     session: AsyncSession, chat_id: int, *, spawn_limit_default: int = 100
 ) -> tuple[int, int, bool]:

@@ -67,6 +67,14 @@ async def chars(message: Message, ctx: AppContext, session: Any, command: Comman
     hits, total = await ctx.collection.search(
         session, query, rarity_id=rarity_id, limit=PAGE_SIZE, page=page
     )
+    if not total:
+        # A fresh install has no characters *by design* (see waifu/plugins/uploads.py), so
+        # an empty page is not the answer — the roster's front door is.
+        from waifu.errors import RosterEmpty
+
+        if not query and rarity_id is None:
+            await text(message, ctx, RosterEmpty().user_message)
+            return
     builder = RichMessageBuilder().heading(f"🎴 roster — {money(total)} characters", size=2)
     if hits:
         rows = [["#", "name", "series", "tier", "price"]]
@@ -281,11 +289,25 @@ async def addchar(
 
 
 def _first_url(message: Message) -> str:
+    """The first *approved* image URL in the message — https, known host, real path.
+
+    The bot will later fetch this URL on behalf of every chat that shows the character, so
+    an arbitrary host in an admin command is an SSRF with a pleasant UI. That is exactly why
+    the reference bot ended up validating character art against an allow-list
+    (``files.catbox.moe`` / ``i.ibb.co``), and its ``ALLOWED_MEDIA_HOSTS`` equivalent here is
+    the ``ALLOWED_MEDIA_HOSTS`` setting, extended by whatever the operator trusts.
+    """
+    from waifu.settings import get_settings
+    from waifu.tg.media import is_allowed_image_url
+
+    hosts = list(get_settings().allowed_media_hosts or [])
     text_body = message.text or message.caption or ""
     for token in text_body.split():
-        if token.startswith(("http://", "https://")) and any(
+        if not any(
             token.lower().endswith(ext) for ext in (".jpg", ".jpeg", ".png", ".webp", ".gif")
         ):
+            continue
+        if is_allowed_image_url(token, hosts=hosts):
             return token
     return ""
 
@@ -417,14 +439,16 @@ async def banner(
     await text(message, ctx, f"🎯 banner weight set on {count} character(s).")
 
 
-@router.message(Command("media", "upload", "attach"))
+@router.message(Command("media", "attach"))
 async def media(
     message: Message, ctx: AppContext, session: Any, command: CommandObject, access: Access
 ) -> None:
     """``/media <id>`` with an attached photo/video — store the bot's own file_id.
 
-    File ids are per-bot, which is exactly why the legacy ``msg_id`` columns could not
-    be reused after a token change; storing them here is the fix, not the bug.
+    ``/upload`` (which *creates* the character as well) lives in :mod:`waifu.plugins.uploads`;
+    this command only re-attaches art to a row that already exists. File ids are per-bot,
+    which is exactly why the legacy ``msg_id`` columns could not be reused after a token
+    change; storing them here is the fix, not the bug.
     """
     staff_of(access)
     args = Args.of(command)
@@ -447,17 +471,25 @@ async def media(
 
 @router.message(Command("reseed", "seedcheck"))
 async def reseed(message: Message, ctx: AppContext, access: Access) -> None:
-    """Re-run the catalogue seed (idempotent) — for a DB that predates the shipped roster."""
+    """Load the optional catalogue into an empty roster (idempotent, name+series deduped).
+
+    This is the escape hatch for someone who wants the 177-entry reference catalogue
+    instead of building a roster from media: a fresh install deliberately has no
+    characters, and ``/upload`` is the front door.
+    """
     staff_of(access)
     from waifu.db.seed import seed_all
 
     # The seeder owns its own transaction (it is the same code the migration calls), so
     # this cannot half-write inside the middleware's.
-    await seed_all(ctx.db.engine)
+    report = await seed_all(ctx.db.engine, characters=True)
+    added = int((report.get("characters") or {}).get("inserted") or 0)
+    total = int((report.get("characters") or {}).get("total") or 0)
     await text(
         message,
         ctx,
-        "🌱 catalogue re-seeded (existing rows are kept; see scripts/build_catalogue.py for the source of truth).",
+        f"🌱 catalogue: {added} added, {total} total (existing rows kept — "
+        "<code>scripts/build_catalogue.py</code> is the source of truth).",
     )
 
 

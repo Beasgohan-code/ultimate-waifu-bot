@@ -38,7 +38,18 @@ def _parser() -> argparse.ArgumentParser:
     doctor.add_argument("--json", action="store_true", help="machine-readable output")
 
     sub.add_parser("migrate", help="create/upgrade the schema (idempotent)")
-    sub.add_parser("seed", help="load the Summon-parity catalogue + rarity ladders")
+
+    seedp = sub.add_parser(
+        "seed", help="load the rarity ladders (the roster is empty on purpose; see --catalogue)"
+    )
+    seedp.add_argument(
+        "--catalogue",
+        action="store_true",
+        help="also insert the shipped catalogue (waifu/data/characters.seed.json)",
+    )
+    seedp.add_argument(
+        "--force", action="store_true", help="re-apply catalogue rows by name+series"
+    )
 
     legacy = sub.add_parser(
         "import-legacy", help="migrate a Summon-bot sqlite file into this schema"
@@ -73,7 +84,7 @@ def main(argv: Sequence[str] | None = None) -> int:  # noqa: PLR0911 - a subcomm
     if args.command == "migrate":
         return _run(_migrate())
     if args.command == "seed":
-        return _run(_seed())
+        return _run(_seed(catalogue=args.catalogue, force=args.force))
     if args.command == "import-legacy":
         return _run(_import_legacy(args))
     if args.command == "jobs":
@@ -148,6 +159,8 @@ async def _doctor(*, json_output: bool = False) -> int:
         print(f"redis   : {'connected' if report['redis'] else 'not configured'}")
         for key, value in report["health"].items():
             print(f"{key:<8}: {value}")
+        if report["health"].get("characters") == 0:
+            print(ROSTER_EMPTY_HINT)
         print("tables  :")
         for entry in report["tables"]:
             print(f"  {entry['name']:<26}{entry['bytes']:>12,}")
@@ -155,13 +168,17 @@ async def _doctor(*, json_output: bool = False) -> int:
     return 0 if "ok" in str(health.get("db", "")) else 1
 
 
-async def _migrate(*, seed: bool = True) -> int:
-    """Migrations first, then the shipped catalogue.
+async def _migrate(*, seed: bool = True, catalogue: bool | None = None, force: bool = False) -> int:
+    """Migrations first, then the tier ladders (and only on request, a roster).
 
     Order matters and is not obvious: :func:`waifu.db.seed.seed_all` writes into
     ``rarity_chances``/``characters``, so running it against an uncreated schema is the
     ``no such table`` that this command exists to prevent. Re-running is safe — the
     migration list is recorded in ``schema_version`` and the seed is an upsert.
+
+    ``catalogue=None`` follows ``SEED_CATALOGUE`` (off). A bot that invents characters for
+    its players shows them a demo; the reference deployment had an empty ``characters``
+    table and filled it through ``/upload``, so that is the shipped behaviour here.
     """
     from waifu.db.engine import Database
     from waifu.db.migrations.runner import apply as apply_migrations
@@ -172,11 +189,49 @@ async def _migrate(*, seed: bool = True) -> int:
         applied = await apply_migrations(db.engine)
         print(f"migrations: {', '.join(applied) if applied else 'schema already current'}")
         if seed:
-            result = await seed_all(db.engine)
+            result = await seed_all(db.engine, characters=catalogue, force=force)
             print("seed: " + ", ".join(f"{key}={_flat(value)}" for key, value in result.items()))
+        await _roster_notice(db)
     finally:
         await db.dispose()
     return 0
+
+
+#: What a fresh install says about its own empty ``characters`` table. The bot shows the
+#: same text to the owner via ``/rosterstats`` and ``RosterEmpty``; three audiences, one
+#: list of doors, because "where do characters come from?" is the first question here.
+ROSTER_EMPTY_HINT = (
+    "roster  : empty (by design — this bot does not invent characters)\n"
+    "          add them from Telegram: reply to a photo/video/GIF with\n"
+    "            /upload <Name> <Series> <1-18>\n"
+    "          turn a group into a feed: /autoadd on\n"
+    "          or load the optional catalogue: python -m waifu seed --catalogue\n"
+    "          or import your old database: python -m waifu import-legacy summon.db"
+)
+
+
+async def _roster_notice(db: object) -> None:
+    """Tell the operator, on the terminal, what an empty roster means and how to fill it."""
+    from sqlalchemy import func, select
+
+    from waifu.db.models import Character, ClaimChance, RarityChance
+
+    async with db.engine.connect() as conn:
+        count = int((await conn.execute(select(func.count()).select_from(Character))).scalar() or 0)
+        pulls = int(
+            (await conn.execute(select(func.count()).select_from(RarityChance))).scalar() or 0
+        )
+        claims = int(
+            (await conn.execute(select(func.count()).select_from(ClaimChance))).scalar() or 0
+        )
+    # Stated every run, because "seed: odds={rarity_chances:0}" on a first migrate means
+    # *the migration already wrote them* — a count of what is there beats a count of what
+    # this command happened to insert.
+    print(f"ladders : {pulls} pull tiers, {claims} claim tiers (18 and 18 is a complete set)")
+    if count:
+        print(f"roster  : {count} character(s) available")
+        return
+    print(ROSTER_EMPTY_HINT)
 
 
 def _flat(value: object) -> str:
@@ -186,10 +241,10 @@ def _flat(value: object) -> str:
     return str(value)
 
 
-async def _seed() -> int:
+async def _seed(*, catalogue: bool = False, force: bool = False) -> int:
     """``waifu seed`` *is* ``waifu migrate``: a seed without the schema is an error and a
-    schema without the seed is an empty bot, so there is only one correct command."""
-    return await _migrate()
+    schema without the ladder is a bot that cannot roll, so there is one correct command."""
+    return await _migrate(catalogue=True if catalogue else None, force=force)
 
 
 async def _import_legacy(args: argparse.Namespace) -> int:

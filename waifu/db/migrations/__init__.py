@@ -39,6 +39,19 @@ async def _odds_defaults(conn: AsyncConnection) -> None:
 
 
 async def _personas(conn: AsyncConnection) -> None:
+    """Load the optional catalogue — *only* when the operator asked for one.
+
+    A fresh database deliberately ends up with **no characters**. The reference bot did
+    the same: its shipped ``summon.db`` held exactly one row, because its roster was
+    never source code — admins typed it in, media first, with ``/upload``. Art and names
+    are content; the tier ladder and prices in ``0002`` are configuration, so those stay
+    mandatory while the catalogue is opt-in (``SEED_CATALOGUE=1``, ``waifu seed
+    --catalogue``, or ``waifu import-legacy`` for an existing deployment).
+    """
+    from waifu.settings import get_settings
+
+    if not get_settings().seed_catalogue:
+        return
     from waifu.db.seed import ensure_characters
 
     await ensure_characters(conn)
@@ -103,7 +116,10 @@ MIGRATIONS: tuple[Migration, ...] = (
         "seed rarity_chances + claim_list from the Rarity enum",
         _odds_defaults,
     ),
-    Migration("2026_09_01_0003_characters", "seed the starter character catalogue", _personas),
+    # The name says "characters" because it once seeded a roster; it now loads one only if
+    # the operator asked (SEED_CATALOGUE), and the name is frozen — schema_version rows on
+    # live installs already record it, and a renamed migration is a re-run migration.
+    Migration("2026_09_01_0003_characters", "optional catalogue load (opt-in)", _personas),
     Migration(
         "2026_09_05_0004_media_file_ids",
         "media file_id columns for cached Telegram handles",

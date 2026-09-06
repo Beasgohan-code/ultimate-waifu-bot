@@ -30,6 +30,7 @@ PLUGIN_ROUTERS: tuple[str, ...] = (
     "waifu.plugins.misc",  # start / help / ping / settings / update
     "waifu.plugins.players",  # register / profile / bio / rename
     "waifu.plugins.characters",  # addchar / editchar / delchar / chars
+    "waifu.plugins.uploads",  # upload / autoadd / uploads / roster — the ingestion pipeline
     "waifu.plugins.gacha",  # pull / hclaim / guarantee / pity / history
     "waifu.plugins.collection",  # collection / harem / stats / check / fav
     "waifu.plugins.economy",  # balance / daily / work / rob / give / pay
@@ -59,6 +60,9 @@ AUX_ROUTERS: dict[str, str] = {
     "business_router": "waifu.plugins.misc",
     "chat_member_router": "waifu.plugins.misc",
     "guest_router": "waifu.plugins.misc",
+    # Last, like every aux router: ``AutoAddFeed`` matches any media message, and that is
+    # only safe once the commands that also take media have had their turn.
+    "autoadd_router": "waifu.plugins.uploads",
 }
 
 

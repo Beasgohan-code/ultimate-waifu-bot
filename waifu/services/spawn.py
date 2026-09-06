@@ -35,7 +35,7 @@ from waifu.db.repositories import progress as progress_repo
 from waifu.db.repositories import spawns as spawn_repo
 from waifu.db.repositories import users as user_repo
 from waifu.enums import ChatMode, LedgerReason, Rarity
-from waifu.errors import AlreadyClaimed, NotFound
+from waifu.errors import AlreadyClaimed, NotFound, RosterEmpty
 from waifu.services.base import Service
 from waifu.services.economy import dupe_value
 from waifu.tg.buttons import callback
@@ -166,7 +166,9 @@ class SpawnService(Service):
         if character is None:
             character = await char_repo.random_any(session)
         if character is None:
-            raise NotFound("the character catalogue is empty — run /addchar or `waifu seed`")
+            # Empty by design on a fresh install: the owner fills it with /upload, so the
+            # player-facing answer has to be the how-to, not a stack trace.
+            raise RosterEmpty()
         return character
 
     async def view(self, session: AsyncSession, spawn: spawn_repo.Spawn) -> SpawnView:
@@ -515,6 +517,20 @@ class SpawnService(Service):
         row.spawn_enabled = enabled
         await session.flush()
         await self.ctx.cache.invalidate("groups")
+
+    # ------------------------------------------------------------ group switches
+    async def set_switch(
+        self, session: AsyncSession, chat_id: int, key: str, *, value: bool, title: str = ""
+    ) -> dict[str, bool]:
+        """Flip a per-group switch that has no column (``autoadd``) — see the repo doc."""
+        out = await spawn_repo.set_group_switch(session, chat_id, key, value=value, title=title)
+        await self.ctx.cache.invalidate("groups")
+        return out
+
+    async def switch(
+        self, session: AsyncSession, chat_id: int, key: str, *, default: bool = False
+    ) -> bool:
+        return await spawn_repo.group_switch(session, chat_id, key, default=default)
 
     # ---------------------------------------------------------------- nguess
     async def start_guess(

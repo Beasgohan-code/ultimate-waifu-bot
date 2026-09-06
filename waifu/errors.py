@@ -54,6 +54,26 @@ class NotFound(WaifuError):
     user_message = "I couldn't find that."
 
 
+class RosterEmpty(WaifuError):
+    """Nothing to draw from — the character catalogue has no rows yet.
+
+    A fresh install is *deliberately* empty: the reference deployment shipped no roster
+    either (its ``summon.db`` held one row, because admins added characters at runtime
+    through ``/upload``). So every path that needs art says so in one place and says what
+    to do about it, instead of a blank card or a stack trace.
+    """
+
+    user_message = (
+        "📭 <b>No characters yet.</b> This bot ships an empty roster on purpose — the owner "
+        "adds it from Telegram:\n"
+        "• <code>/upload</code> — reply to a photo/video/GIF with "
+        "<code>/upload Name Series 1-18</code>\n"
+        "• <code>/autoadd on</code> — every captioned photo an admin sends becomes a character\n"
+        "• <code>/reseed</code> — load the optional 177-entry reference catalogue\n"
+        "• <code>python -m waifu import-legacy summon.db</code> — import an existing database"
+    )
+
+
 class PermissionDenied(WaifuError):
     user_message = "You don't have permission to do that."
 

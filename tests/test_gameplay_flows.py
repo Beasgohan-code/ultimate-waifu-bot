@@ -162,13 +162,15 @@ async def test_free_claim_cannot_be_repeat_farmed(ctx, tx, player):
 
 
 async def test_quests_are_stable_for_a_day_and_claimable_once(ctx, tx, player):
-    quests = await ctx.progress.quests(tx, player)
+    # ``day=`` pins the draw: the rotation is seeded by (user, day), and a test that reads
+    # "today" from the clock goes red whenever the day rolls over mid-run.
+    quests = await ctx.progress.quests(tx, player, day="2026-01-01")
     assert len(quests) == 3
-    assert {q.key for q in quests} == {q.key for q in await ctx.progress.quests(tx, player)}, (
-        "quests must not reshuffle on refresh"
-    )
+    assert {q.key for q in quests} == {
+        q.key for q in await ctx.progress.quests(tx, player, day="2026-01-01")
+    }, "quests must not reshuffle on refresh"
     daily = next((q for q in quests if q.key == "daily"), None)
-    assert daily is not None
+    assert daily is not None, "the daily claim is the anchor quest, every day"
     assert daily.progress == 0 and not daily.claimed
     await ctx.economy.daily(tx, player)
     refreshed = {q.key: q for q in await ctx.progress.quests(tx, player)}

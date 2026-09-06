@@ -157,10 +157,24 @@ async def ensure_characters(conn: AsyncConnection, *, force: bool = False) -> di
 
 # ------------------------------------------------------------------------------ glue
 async def seed_all(
-    engine: AsyncEngine, *, characters: bool = True, force: bool = False, reset_odds: bool = False
+    engine: AsyncEngine,
+    *,
+    characters: bool | None = None,
+    force: bool = False,
+    reset_odds: bool = False,
 ) -> dict[str, Any]:
-    """Called by ``waifu seed``, ``waifu migrate`` and the first-run path in ``waifu doctor``."""
+    """Called by ``waifu seed``, ``waifu migrate`` and the first-run path in ``waifu doctor``.
+
+    ``characters=None`` (the default) means *follow the install policy* — i.e.
+    ``SEED_CATALOGUE``, which is off: a fresh bot has an empty roster and fills it through
+    ``/upload`` like the reference deployment did. Pass ``characters=True`` to load the
+    shipped catalogue regardless (``waifu seed --catalogue``, tests, an importer's caller).
+    """
+    from waifu.settings import get_settings
+
     out: dict[str, Any] = {}
+    if characters is None:
+        characters = get_settings().seed_catalogue
     async with engine.begin() as conn:
         out["odds"] = await ensure_odds(conn, reset=reset_odds)
         if characters:
@@ -171,10 +185,14 @@ async def seed_all(
 
 
 async def seed_session(
-    session: AsyncSession, *, characters: bool = True, force: bool = False
+    session: AsyncSession, *, characters: bool | None = None, force: bool = False
 ) -> dict[str, Any]:
     """Same as :func:`seed_all` but inside a caller's transaction (used by tests)."""
+    from waifu.settings import get_settings
+
     out: dict[str, Any] = {}
+    if characters is None:
+        characters = get_settings().seed_catalogue
     if characters:
         existing = {
             (name, anime)

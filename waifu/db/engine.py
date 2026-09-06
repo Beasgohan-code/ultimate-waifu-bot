@@ -13,7 +13,7 @@ from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 from typing import Any, Self
 
-from sqlalchemy import Select, text
+from sqlalchemy import Select, func, select, text
 from sqlalchemy.ext.asyncio import (
     AsyncConnection,
     AsyncEngine,
@@ -192,6 +192,20 @@ class Database:
                 info.update(pg_version=row[1], pg_size=row[2])
             row = await conn.execute(text("SELECT count(*) FROM users"))
             info["users"] = int(row.scalar_one())
+            # The two counts an operator of *this* bot checks first, because the shape of
+            # the product is unusual: players accumulate, characters are uploaded. A fresh
+            # install therefore legitimately reports ``characters: 0`` — which is why the
+            # CLI's doctor explains what to do about it instead of looking broken.
+            from waifu.db.models import Character, RarityChance
+
+            for model, key in ((Character, "characters"), (RarityChance, "tiers")):
+                info[key] = int(
+                    (
+                        await conn.execute(
+                            select(func.count()).select_from(model.__table__)  # no SQL strings
+                        )
+                    ).scalar_one()
+                )
         return info
 
     async def table_sizes(self) -> list[tuple[str, int]]:

@@ -312,11 +312,13 @@ class ProgressService(Service):
             raise NotFound("player not registered")
         metrics = await self.metrics(session, user)
         # Hash of (user, day) → the same three quests all day, different tomorrow,
-        # and no state to keep in sync.
-        start = int(commit(f"quests:{user_id}:{today}")[:8], 16) % max(1, len(QUEST_TEMPLATES))
-        templates = [
-            QUEST_TEMPLATES[(start + i) % len(QUEST_TEMPLATES)] for i in range(QUESTS_PER_DAY)
-        ]
+        # and no state to keep in sync. The first slot is always the daily claim: it is
+        # the quest that teaches the loop, and a rotation that could hand a player three
+        # quests without it (which the old rotation did) turned "finish today's board"
+        # into a lottery.
+        anchor, *rest = QUEST_TEMPLATES
+        start = int(commit(f"quests:{user_id}:{today}")[:8], 16) % max(1, len(rest))
+        templates = [anchor] + [rest[(start + i) % len(rest)] for i in range(QUESTS_PER_DAY - 1)]
         out: list[Quest] = []
         for key, label, emoji, target, reward in templates:
             progress = int(metrics.get(_QUEST_METRIC.get(key, key), 0) or 0)

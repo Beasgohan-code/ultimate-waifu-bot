@@ -13,11 +13,27 @@ comes from that bot (`config.py`, its 18-tier ladder and its economy constants),
 that switches over notices no price, no odds and no missing command; the audit of what it
 found is in the same file.
 
-**No placeholder data.** A fresh install seeds the 177-character catalogue and the 18-tier
-price/odds ladder from `waifu/data/characters.seed.json` — it is not "add your own
-characters", and there is no empty database to fill in. If you are replacing a live
-Summon-bot, `python -m waifu import-legacy ./summon.db` migrates its 24 tables (wallets,
-collections, favourites, escrow, codes, boosts) idempotently.
+**Nothing is invented for you.** A fresh install seeds the *configuration* — the 18-tier
+ladder with its published odds, claim rates and prices — and an **empty character table**,
+because that is how the reference deployment actually worked: its roster was not source
+code, it was what its admins uploaded, one message at a time. So characters come in through
+the bot itself:
+
+```
+/upload Gojo jujutsu-kaisen 4      ← sent as a reply to a photo, video, GIF or live photo
+```
+
+The media is stored as a permanent `file_id` (never a hotlinked URL), price and power are
+taken from the tier, the same name again updates the row instead of duplicating it, and the
+receipt offers Catbox/ImgBB if you also want a public URL — the reference bot's
+`msg_id`/`img_url`/`img_url2` triple, on columns that say what they are. `/autoadd on` in a
+group or channel turns it into a feed: any captioned media an admin posts is filed, with an
+ephemeral receipt only the uploader sees.
+
+Two ways in that do not need a phone: `python -m waifu seed --catalogue` loads the optional
+177-entry reference catalogue (`waifu/data/characters.seed.json`, `SEED_CATALOGUE=1` to make
+it automatic), and `python -m waifu import-legacy ./summon.db` migrates a live Summon-bot's
+24 tables (characters, wallets, collections, favourites, escrow, codes, boosts) idempotently.
 
 ## Run it
 
@@ -31,7 +47,7 @@ Or without Docker:
 ```bash
 make install
 python -m waifu doctor        # config + schema + plugin-registration self-check
-python -m waifu migrate       # schema, then the shipped catalogue
+python -m waifu migrate       # schema + tier ladders; the roster is yours to upload
 python -m waifu import-legacy ./summon.db --dry-run   # optional: your old data
 make run
 ```
@@ -54,7 +70,10 @@ waifu/
   tg/          one module per new Bot API surface: rich messages, drafts, ephemerals,
                checklists, guest mode, business connection, paid media/Stars, stories,
                live photos, reactions, capability negotiation
-  plugins/     22 routers: one file per feature area, handlers only
+  plugins/     23 routers: one file per feature area, handlers only
+               (uploads.py is the exception the design allows: the admin roster pipeline
+               writes through the characters repository because there is no service for
+               "ingest this media" — and it is where an empty database stops being one)
   ui/ enums.py errors.py settings.py logging.py utils/
 tests/         fixtures wire the real services to in-memory SQLite; no mocked own-layers
 docs/          generated command reference + the parity contract
@@ -68,8 +87,10 @@ outside the session middleware.
 
 ## New Bot API features, and how they degrade
 
-Rich messages (10.1), message drafts (9.5/10.3), ephemeral messages, checklists, live
-photos, guest mode (10.0), business connection (10.2), Stars + paid media, boosts, member
+Rich messages (10.1), message drafts (9.5/10.3), ephemeral messages (10.2/10.3 — also how
+`/autoadd` acknowledges an ingest without turning the group into a console), checklists,
+live photos (9.1 — `/upload` files a live photo with its motion instead of flattening it to
+a still), guest mode (10.0), business connection (10.2), Stars + paid media, boosts, member
 tags, `date_time` entities, custom emoji in bot messages (9.4), reaction and poll updates,
 prepared inline messages for sharing a harem. `python -m waifu` negotiates them once at
 startup (`waifu/tg/caps.py`) and each renderer picks the plain path when the server does
@@ -86,7 +107,7 @@ list as a file, and Telegram's ⊞ menu is published at startup from the same re
 ## Tests
 
 ```bash
-make test    # 154 tests: pulls and pity, economy invariants, escrow, paging, migrations
+make test    # 190 tests: pulls and pity, economy invariants, escrow, paging, ingestion
 make lint    # ruff + ruff format + "generated docs are current"
 make check   # both, which is what CI runs
 ```

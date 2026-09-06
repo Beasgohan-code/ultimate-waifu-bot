@@ -26,6 +26,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
+import anyio
 from aiogram import Bot
 from aiogram.exceptions import TelegramAPIError
 from aiogram.types import (
@@ -272,3 +273,104 @@ async def archive_is_usable(bot: Bot, chat_id: int) -> bool:
     except TelegramAPIError:
         return False
     return True
+
+
+# --------------------------------------------------------------- approved image URLs
+#: The only two hosts the reference deployment accepted for character art. Catbox is
+#: anonymous (no key), ImgBB needs one; both hand back a *direct* HTTPS asset, which is
+#: what a Telegram ``photo=`` argument can fetch. Everything else — file ids, data:
+#: URIs, localhost, a redirect that ends somewhere else — is refused before the bot is
+#: asked to fetch it, because an image fetch is an SSRF primitive in an admin command.
+ALLOWED_IMAGE_HOSTS = frozenset({"files.catbox.moe", "i.ibb.co", "catbox.moe"})
+
+
+def is_allowed_image_url(value: object, *, hosts: Iterable[str] | None = None) -> bool:
+    """True when ``value`` is a direct HTTPS asset on an approved host.
+
+    Rules, in order: HTTPS only, host in the allow-list, no ``user:pass@`` in the URL,
+    and a real path (``https://files.catbox.moe`` alone is not an asset).
+    """
+    from urllib.parse import urlsplit
+
+    if not isinstance(value, str) or not value.strip():
+        return False
+    parsed = urlsplit(value.strip())
+    allowed = frozenset(hosts) if hosts else ALLOWED_IMAGE_HOSTS
+    return (
+        parsed.scheme == "https"
+        and (parsed.hostname or "") in allowed
+        and not parsed.username
+        and not parsed.password
+        and bool(parsed.path and parsed.path != "/")
+    )
+
+
+def require_image_url(value: object, *, hosts: Iterable[str] | None = None) -> str:
+    """:func:`is_allowed_image_url` that returns the cleaned URL or raises ValueError."""
+    if not is_allowed_image_url(value, hosts=hosts):
+        raise ValueError(
+            "Character image URL must be a direct https:// link on an approved host "
+            f"({', '.join(sorted(hosts or ALLOWED_IMAGE_HOSTS))})."
+        )
+    return str(value).strip()
+
+
+# ------------------------------------------------------------------ public web hosts
+def _read_asset(local_path: str | Path) -> tuple[bytes, str]:
+    """Read the file off the event loop (the two hosts below want bytes, not a handle).
+
+    A bot-sized asset is at most the ~10 MB Telegram lets an admin send, so buffering it
+    here is cheaper than a blocking ``read`` inside the dispatcher.
+    """
+    path = Path(local_path)
+    return path.read_bytes(), (path.name or "upload.bin")
+
+
+async def upload_to_catbox(local_path: str | Path, *, total_s: int = 20) -> str:
+    """Anonymous multipart upload to catbox — the reference bot's primary host.
+
+    Returns the direct ``https://files.catbox.moe/<name>`` URL. A non-200 becomes a
+    ``RuntimeError`` carrying the status, because the caller has to show the admin *why*
+    the host refused instead of a bare ✕.
+    """
+    import aiohttp
+
+    payload, name = await anyio.to_thread.run_sync(_read_asset, local_path)
+    url = "https://catbox.moe/user/api.php"
+    form = aiohttp.FormData()
+    form.add_field("reqtype", "fileupload")
+    form.add_field("fileToUpload", payload, filename=name)
+    async with (
+        aiohttp.ClientSession(timeout=aiohttp.ClientTimeout(total=total_s)) as session,
+        session.post(url, data=form) as response,
+    ):
+        if response.status != 200:
+            raise RuntimeError(f"HTTP {response.status}")
+        return (await response.text()).strip()
+
+
+async def upload_to_imgbb(local_path: str | Path, api_key: str, *, total_s: int = 20) -> str:
+    """Base64 form upload to ImgBB — the fallback host when catbox is unreachable.
+
+    ImgBB accepts ``image=<base64>`` in a form body, so no multipart is needed. It
+    answers 200 with ``{"success": false}`` for a bad key, so both shapes are checked.
+    """
+    import base64
+
+    import aiohttp
+
+    if not api_key:
+        raise RuntimeError("IMGBB_API_KEY is not set in the config")
+    url = f"https://api.imgbb.com/1/upload?key={api_key}"
+    raw, name = await anyio.to_thread.run_sync(_read_asset, local_path)
+    payload = {"image": base64.b64encode(raw).decode(), "name": name}
+    async with (
+        aiohttp.ClientSession(timeout=aiohttp.ClientTimeout(total=total_s)) as session,
+        session.post(url, data=payload) as response,
+    ):
+        body = await response.json(content_type=None)
+    if not body or not body.get("success"):
+        raise RuntimeError(
+            f"ImgBB: {body.get('error') or response.status if body else 'no response'}"
+        )
+    return str(((body.get("data") or {}).get("url")) or "").strip()

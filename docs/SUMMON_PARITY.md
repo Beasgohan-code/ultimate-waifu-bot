@@ -129,7 +129,7 @@ Reference surface: **110 names and aliases**. Wired here: **109**.
 | `/unpremium` | ✅ wired | revoke premium |
 | `/update` | ✅ wired | roster CRUD |
 | `/updatechar` | ✅ wired | roster CRUD |
-| `/upload` | ✅ wired | alias |
+| `/upload` | ✅ wired | reply to media → creates the character |
 | `/warn` | ✅ wired | moderation |
 | `/work` | ✅ wired | earn coins |
 
@@ -181,7 +181,7 @@ pages browse, so a fresh install is not an empty database.
 
 | tier | drop % | claim % | base price |
 | --- | --- | --- | --- |
-| ⚪️ Common | 46.44 | 13.55 | 15,000 |
+| ⚪ Common | 46.44 | 13.55 | 15,000 |
 | 🔵 Rare | 25.80 | 0.00 | 25,000 |
 | 💮 Special Edition | 12.38 | 40.65 | 50,000 |
 | ⭐ Legendary | 6.19 | 20.33 | 90,000 |
@@ -194,7 +194,7 @@ pages browse, so a fresh install is not an empty database.
 | ❄️ Winter Edition | 0.52 | 0.07 | 400,000 |
 | 🎇 New Year Edition | 0.52 | 1.69 | 450,000 |
 | 🎍 Festival Edition | 0.41 | 1.35 | 550,000 |
-| 🎥 AMV | 0.10 | 0.00 | 650,000 |
+| 🎥 AMV Edition | 0.10 | 0.00 | 650,000 |
 | 🎉 Event Edition | 1.03 | 3.39 | 650,000 |
 | 🌌 Celestial Edition | 0.41 | 1.35 | 1,000,000 |
 | 💎 Luxury Edition | 0.31 | 0.00 | 1,500,000 |

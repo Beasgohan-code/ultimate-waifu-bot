@@ -131,7 +131,8 @@ class Rarity(IntEnum):
                 continue
             if (
                 stripped in (label, name)
-                or stripped == f"{emoji} {label}".strip()
+                or stripped
+                in (f"{emoji} {label}".strip(), f"{emoji} {member.label.lower()}".strip())
                 or stripped.endswith(label)
                 or stripped.endswith(name)
             ):
@@ -160,7 +161,7 @@ _HIGH_TIER_FLOOR = 6
 _REFRESH_MAX_TIER = 5
 
 _RARITY_EMOJI: dict[Rarity, str] = {
-    Rarity.COMMON: "⚪️",
+    Rarity.COMMON: "⚪",
     Rarity.RARE: "🔵",
     Rarity.SPECIAL: "💮",
     Rarity.LEGENDARY: "⭐",
@@ -194,7 +195,7 @@ _RARITY_LABEL: dict[Rarity, str] = {
     Rarity.WINTER: "Winter Edition",
     Rarity.NEWYEAR: "New Year Edition",
     Rarity.FESTIVAL: "Festival Edition",
-    Rarity.AMV: "AMV",
+    Rarity.AMV: "AMV Edition",
     Rarity.EVENT: "Event Edition",
     Rarity.CELESTIAL: "Celestial Edition",
     Rarity.LUXURY: "Luxury Edition",

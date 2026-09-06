@@ -2,9 +2,14 @@
 
 The point of this file is that **tests exercise the same object graph production
 runs** — ``AppContext`` + every service from :func:`waifu.services.build` — against
-SQLite with the shipped catalogue seeded. No mocks of our own layers, because the
-bugs this bot is designed to avoid (double payouts, seed/migration drift, a service
-that only works when another one happens to be wired) all live *between* layers.
+SQLite. No mocks of our own layers, because the bugs this bot is designed to avoid
+(double payouts, seed/migration drift, a service that only works when another one
+happens to be wired) all live *between* layers.
+
+The one place a test diverges from an install: gameplay needs a pool to pull from, so
+:func:`db` asks for the shipped catalogue explicitly (``characters=True``). A fresh
+database has none — that contract is asserted in :mod:`tests.test_uploads`, not assumed
+here.
 
 Telegram is the one thing stubbed: ``bot=None`` means any handler-side send is a
 no-op, and the services below are chosen so the flows under test never need one.
@@ -49,11 +54,17 @@ def test_settings(tmp_path: object) -> Settings:
 
 @pytest_asyncio.fixture
 async def db(tmp_path) -> AsyncIterator[Database]:
-    """A fresh database **with the shipped catalogue and odds seeded**."""
+    """A fresh database: ladders from the migration, roster asked for explicitly.
+
+    ``characters=True`` is a *test* decision, not the product's: gameplay tests need a
+    pool to pull from, and the shipped catalogue is the cheapest real one. A fresh install
+    leaves the roster empty and fills it through ``/upload`` — the contract
+    :mod:`tests.test_catalogue_seed` pins down.
+    """
     settings = test_settings(tmp_path)
     database = Database.from_settings(settings)
     await database.create_all()
-    await seed_all(database.engine)
+    await seed_all(database.engine, characters=True)
     try:
         yield database
     finally:
