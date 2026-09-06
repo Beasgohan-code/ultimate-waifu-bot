@@ -275,6 +275,30 @@ class Settings(BaseSettings):
     support_chat_id: int = 0
     #: Private chat where generated art is uploaded so it becomes a permanent
     #: file_id (``/archiveart`` uses this; leave 0 to disable archiving).
+    # ---- mini app ----------------------------------------------------------------------
+    #: The page a ``/webapp`` button opens, and the only origin the JSON API answers CORS for.
+    #: Empty means "no front-end": ``/webapp`` explains itself instead of sending a button to a
+    #: URL nobody configured, and the API takes no ``X-API-Token`` (see ``webapp_secret_key``).
+    webapp_url: str = ""
+    #: Shared secret for a front-end that is *not* a Telegram Mini App (an operator dashboard, a
+    #: monitoring probe). Empty means the header is not accepted at all — signed ``initData``
+    #: is the normal path and never needs this.
+    webapp_secret_key: str = ""
+
+    # ---- JSON API (the reference bot's Flask ``api.py``; see docs/API.md) ----------------
+    # On by default *off*: the routes are a projection of tables a browser can reach, so they
+    # only exist if the operator points a Mini App at them.
+    api_enabled: bool = False
+    # 0.0.0.0 because a container has no other address worth binding; the port is only open at
+    # all when API_ENABLED is set, and every route but /api/health needs a signature.
+    api_host: str = "0.0.0.0"
+    api_port: int = 8080
+    #: ``?uid=`` without a signature: development only, and refused when the bot is not in
+    #: test mode. The reference accepted it always, which is the hole in that design.
+    api_allow_uid_query: bool = False
+    #: How old a signed ``initData`` may be before it is treated as a leaked credential.
+    api_init_data_max_age: int = 24 * 60 * 60
+
     media_archive_chat_id: int = 0
     log_channel_id: int = 0
 

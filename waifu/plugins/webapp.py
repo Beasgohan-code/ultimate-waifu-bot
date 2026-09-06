@@ -34,7 +34,7 @@ router = Router(name="webapp")
 
 @router.message(Command("webapp", "app", "mini"))
 async def webapp(message: Message, ctx: AppContext, session: Any, access: Access) -> None:
-    url = str(getattr(ctx.settings, "webapp_url", "") or "")
+    url = str(ctx.settings.webapp_url or "")
     if not url:
         await text(
             message,

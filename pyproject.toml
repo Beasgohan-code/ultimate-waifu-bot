@@ -21,6 +21,7 @@ dependencies = [
     "Pillow>=11.0",             # profile / collection card rendering
     "httpx>=0.28",              # AI persona backend + external media
     "orjson>=3.10",
+    "aiohttp>=3.11",          # webhook transport (via aiogram) and the mini-app JSON API
     "pytz>=2024.1",
 ]
 
@@ -31,6 +32,9 @@ dev = [
     "ruff>=0.15",
     "mypy>=1.13",
     "bandit[toml]>=1.7",
+    # xdis decodes the reference deployment's __pycache__ so `make extract` can inventory
+    # functions that were deleted from its source tree (docs/SUMMON_EXTRACT.md).
+    "xdis>=6.1",
 ]
 
 [project.scripts]

@@ -70,14 +70,21 @@ waifu/
   tg/          one module per new Bot API surface: rich messages, drafts, ephemerals,
                checklists, guest mode, business connection, paid media/Stars, stories,
                live photos, reactions, capability negotiation
-  plugins/     23 routers: one file per feature area, handlers only
+  plugins/     24 routers: one file per feature area, handlers only
                (uploads.py is the exception the design allows: the admin roster pipeline
                writes through the characters repository because there is no service for
                "ingest this media" — and it is where an empty database stops being one)
-  ui/ enums.py errors.py settings.py logging.py utils/
+  api/         the mini-app JSON API on aiohttp (waifu/api): signed-initData auth, read
+               endpoints for harem/market/leaderboard, POST for anything that spends money
+  data/        the catalogue build, the custom-emoji map, card fonts
+  enums.py errors.py settings.py logging.py utils/
 tests/         fixtures wire the real services to in-memory SQLite; no mocked own-layers
-docs/          generated command reference + the parity contract
-scripts/       build_catalogue.py (roster), import_summon.py (migration), gen_reference_docs.py
+docs/          generated command reference, the parity contract, and SUMMON_EXTRACT.md
+               (every module and function in the reference repo — source *and* its bytecode —
+               mapped to where it went here)
+scripts/       build_catalogue.py (roster), import_summon.py (migration),
+               gen_reference_docs.py, extract_summon_reference.py (the audit above)
+deploy/        supervisor (crash restart + optional recycling) and the systemd unit
 ```
 
 The dependency rule, enforced by how things are imported: `plugins → services → db`, and
@@ -89,13 +96,22 @@ outside the session middleware.
 
 Rich messages (10.1), message drafts (9.5/10.3), ephemeral messages (10.2/10.3 — also how
 `/autoadd` acknowledges an ingest without turning the group into a console), checklists,
-live photos (9.1 — `/upload` files a live photo with its motion instead of flattening it to
-a still), guest mode (10.0), business connection (10.2), Stars + paid media, boosts, member
+live photos (9.1 — `/autoadd` and `/addchar` file one with its motion, while `/upload`
+flattens it to a still exactly as the reference bot did), guest mode (10.0), business connection (10.2), Stars + paid media, boosts, member
 tags, `date_time` entities, custom emoji in bot messages (9.4), reaction and poll updates,
-prepared inline messages for sharing a harem. `python -m waifu` negotiates them once at
+prepared inline messages for sharing a harem, and inline mode for the roster and your own
+collection (`@bot <query>`, `@bot collection.<you>`). `python -m waifu` negotiates them once at
 startup (`waifu/tg/caps.py`) and each renderer picks the plain path when the server does
 not have them — so an instance on a self-hosted API server of last year loses formatting,
 not functionality. Details: [docs/NEW_BOT_API.md](docs/NEW_BOT_API.md).
+
+## Mini-app JSON API
+
+`python -m waifu api` serves the front-end contract the reference deployment's `api.py` had —
+`/api/user`, `/api/inventory`, `/api/characters`, `/api/market`, `/api/leaderboard`,
+`/api/streak`, `/api/achievements`, `/api/health`, and `POST /api/daily` / `POST /api/summon` —
+with Telegram's signed `initData` required on every one of them and the id in the path forced to
+match the signature. Details and the auth algorithm: [docs/API.md](docs/API.md).
 
 ## Commands
 
@@ -107,7 +123,8 @@ list as a file, and Telegram's ⊞ menu is published at startup from the same re
 ## Tests
 
 ```bash
-make test    # 190 tests: pulls and pity, economy invariants, escrow, paging, ingestion
+make test    # 268 tests: pulls and pity, economy invariants, escrow, paging, ingestion,
+             # inline mode, the API's initData signature check, the reference-port map
 make lint    # ruff + ruff format + "generated docs are current"
 make check   # both, which is what CI runs
 ```

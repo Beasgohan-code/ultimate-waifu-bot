@@ -66,6 +66,18 @@ def _parser() -> argparse.ArgumentParser:
         "--reset-escrow", action="store_true", help="close legacy market escrow before starting"
     )
 
+    api = sub.add_parser(
+        "api",
+        help="serve the mini-app JSON API (the reference bot's api.py, ported and authenticated)",
+    )
+    api.add_argument("--host", default="", help="bind address (default API_HOST)")
+    api.add_argument("--port", type=int, default=0, help="bind port (default API_PORT)")
+    api.add_argument(
+        "--insecure-uid-query",
+        action="store_true",
+        help="accept ?uid= with no signature (development only)",
+    )
+
     jobs = sub.add_parser("jobs", help="run one scheduler pass (cron instead of polling)")
     jobs.add_argument(
         "--name", default="all", help="autospawn | settle | quests | premium | cleanup | all"
@@ -87,6 +99,8 @@ def main(argv: Sequence[str] | None = None) -> int:  # noqa: PLR0911 - a subcomm
         return _run(_seed(catalogue=args.catalogue, force=args.force))
     if args.command == "import-legacy":
         return _run(_import_legacy(args))
+    if args.command == "api":
+        return _run(_api(host=args.host, port=args.port, insecure_uid=args.insecure_uid_query))
     if args.command == "jobs":
         return _run(_jobs(args.name))
     if args.command == "version":
@@ -166,6 +180,35 @@ async def _doctor(*, json_output: bool = False) -> int:
             print(f"  {entry['name']:<26}{entry['bytes']:>12,}")
     await app.ctx.db.dispose()
     return 0 if "ok" in str(health.get("db", "")) else 1
+
+
+async def _api(*, host: str = "", port: int = 0, insecure_uid: bool = False) -> int:
+    """Serve the mini-app API on its own, for a front-end that scales apart from the bot.
+
+    Same process, same engine, same repositories as the chat — a second service would need its
+    own migrations, which is how the reference deployment's web view drifted from its bot.
+    """
+    from waifu.api import serve
+    from waifu.core.app import build_app
+
+    app = await build_app(with_bot=False, negotiate=False)
+    if insecure_uid:
+        app.ctx.settings = app.ctx.settings.model_copy(update={"api_allow_uid_query": True})
+        print("warning: ?uid= accepted without a signature — development only")
+    runner = await serve(app.ctx, host=host, port=port)
+    settings = app.ctx.settings
+    print(
+        f"api: http://{settings.api_host}:{settings.api_port}/api/health — "
+        "identity via X-Init-Data (signed initData); POST /api/daily, POST /api/summon"
+    )
+    try:
+        await asyncio.Event().wait()  # pragma: no cover - until Ctrl-C
+    except (KeyboardInterrupt, asyncio.CancelledError):  # pragma: no cover
+        pass
+    finally:
+        await runner.cleanup()
+        await app.ctx.db.dispose()
+    return 0
 
 
 async def _migrate(*, seed: bool = True, catalogue: bool | None = None, force: bool = False) -> int:

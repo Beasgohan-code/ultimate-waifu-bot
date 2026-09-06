@@ -1,0 +1,186 @@
+{
+  "preamble": [
+    "This file is the audit trail behind every row of the table below: it says, per module of",
+    "the reference deployment, *where* that behaviour lives in this repository — or why it does",
+    "not. `scripts/extract_summon_reference.py` renders it into this document, so a module can",
+    "never be quietly forgotten: the extractor lists what the reference *has*, the map has to",
+    "account for each name in that list.",
+    "",
+    "Statuses: **ported** (same behaviour, same strings) · **adapted** (same behaviour, this",
+    "repo's storage/engine conventions) · **superseded** (the reference's job is done by a",
+    "different mechanism here) · **tooling** (offline or deployment script, not bot behaviour) ·",
+    "**gap** (not implemented; see the note — a gap is recorded, not hidden).",
+    "",
+    "### The one that matters most: `/upload`",
+    "",
+    "`upload_character` is **not in the reference's source tree**. It exists only in the",
+    "deployment's compiled cache (`__pycache__/commands_admin.cpython-313.pyc`: `new_upload_id`,",
+    "`upload_to_catbox`, `upload_to_imgbb`, `upload_character`, `upload_callback`), while",
+    "`commands_admin.py` keeps the corpse of the feature as state plus a policy comment:",
+    "",
+    "```python",
+    "# ====== TEMP STORAGE ======",
+    "PENDING_UPLOADS = {}",
+    "COUNTER = {\"n\": 0}",
+    "",
+    "# Character uploads are URL-only. Use /add and /update with a verified",
+    "# https://files.catbox.moe/... or https://i.ibb.co/... image URL.",
+    "```",
+    "",
+    "So the reference repo tells two true things at once, and this bot honours both: the retired",
+    "**upload flow** is ported verbatim from the bytecode (`/upload <name> <series> <1-18>` as a",
+    "reply to a photo/video/GIF, `up_*` callbacks, gap-filled zero-padded ids, the exact refusal",
+    "strings — see `waifu/plugins/uploads.py`), and the **current policy** it was replaced by —",
+    "verified-URL ingestion through `/add` and `/update`, allow-listed to `files.catbox.moe` and",
+    "`i.ibb.co` (`media_urls.py`) — is ported too (`/addchar`, `/media`, and the same allow-list",
+    "enforced by `waifu/tg/media.py` before anything is ever fetched). The roster still starts",
+    "empty either way: both doors are admin-only, and nothing ships a character."
+  ],
+  "modules": {
+    "__init__": {
+      "status": "tooling",
+      "where": ["waifu/__init__.py"],
+      "note": "Package marker; no behaviour to port."
+    },
+    "api": {
+      "status": "ported",
+      "where": ["waifu/api/server.py", "waifu/api/auth.py", "docs/API.md"],
+      "note": "The deleted Flask service (only in the bytecode): read-only JSON endpoints for user/inventory/characters/market/leaderboard/streak/achievements plus the Mini-App initData HMAC check. Re-implemented on aiohttp — endpoints unchanged in shape, but the two mutating routes are POST-only and will not accept a bare ?uid= in production."
+    },
+    "auto_spawn": {
+      "status": "ported",
+      "where": ["waifu/plugins/spawns.py", "waifu/services/spawn.py", "waifu/core/jobs.py"],
+      "note": "Timed weighted spawns, hint button, claim race. The watcher is a scheduler job instead of a while-loop task, so a restart does not lose the next spawn window; both the random and weighted pickers exist (``_pick_random_character``/``_pick_weighted_character`` -> ``spawn.pick``)."
+    },
+    "bootstrap_postgres": {
+      "status": "superseded",
+      "where": ["waifu/db/migrations/runner.py", "waifu/db/engine.py", "waifu/settings.py"],
+      "note": "Postgres bootstrap + schema guard. Here that is ``python -m waifu migrate`` (a small versioned runner, ``waifu/db/migrations/runner.py``) on whatever ``DATABASE_URL`` says, and the settings validator refuses a SQLite URL outside development — which is the same 'are you sure this is the right database' guard the script implemented, moved to where a typo cannot get past startup."
+    },
+    "catch_all": {
+      "status": "ported",
+      "where": ["waifu/core/middlewares.py", "waifu/plugins/moderation.py", "waifu/plugins/spawns.py", "waifu/db/repositories/spawns.py"],
+      "note": "Spam limiter (SPAM_LIMIT=20), group auto-registration from live traffic, and chatter-triggered spawns. Message counting is middleware with a Redis window; group tracking writes the same ``groups`` row that ``/groupsettings`` and ``/autospan`` read."
+    },
+    "check_schema": {
+      "status": "superseded",
+      "where": ["waifu/__main__.py"],
+      "note": "Offline 'does the DB match the code' check -> ``python -m waifu doctor`` (migrations applied, ladders present, roster counts, redis/poll capability)."
+    },
+    "commands_admin": {
+      "status": "ported",
+      "where": ["waifu/plugins/uploads.py", "waifu/plugins/characters.py", "waifu/plugins/sudo.py", "waifu/plugins/moderation.py", "waifu/plugins/codes.py"],
+      "note": "The big one: ``upload_character``/``upload_callback`` (ported word for word, from bytecode), ``add_character``/``update_character``/``delete`` -> ``/addchar`` ``/media`` ``/delchar``, ``change_chance``/``chance_list`` -> ``/setchance``/``chancelist``, ``ban``/``unban``/``warn``/``removeall`` -> moderation plugin, ``gen_code``/``redeem_code`` -> codes plugin, ``broadcast``/``save_group``/``transfer``/``removeall_callback`` -> ``/broadcast`` and group tables, ``is_sudo``/``check_sudo``/``addsudo_command`` -> sudo plugin, ``get_rarity``/``get_character_media``/``get_random_character`` -> ``waifu/db/repositories/characters.py``."
+    },
+    "commands_auction": {
+      "status": "ported",
+      "where": ["waifu/plugins/auctions.py", "waifu/services/auction.py"],
+      "note": "All 22 functions: listing, bidding, custom-bid input, pinned-message updates, the closing job, my-bids and cancel. The auction tables are migration-managed rather than created lazily by ``ensure_auction_tables``."
+    },
+    "commands_hstats": {
+      "status": "ported",
+      "where": ["waifu/plugins/hstats.py", "waifu/services/hstats.py"],
+      "note": "Per-rarity harem stats, HTML page + callback pagination, premium-gated extra views (``is_premium``/``premium_left`` -> premium plugin)."
+    },
+    "commands_owner": {
+      "status": "ported",
+      "where": ["waifu/plugins/sudo.py", "waifu/__main__.py"],
+      "note": "Owner numpad panel (``get_numpad_keyboard``/``open_panel``/``ownerpanel_callback``), coin granting and ``restart_bot`` -> ``/maint`` plus a process supervisor (`deploy/supervisor.py`) instead of an in-process exec."
+    },
+    "commands_user": {
+      "status": "ported",
+      "where": ["waifu/plugins/collection.py", "waifu/plugins/economy.py", "waifu/plugins/gacha.py", "waifu/plugins/stats.py", "waifu/plugins/players.py", "waifu/plugins/misc.py"],
+      "note": "57 functions: collection pages and navigation, ``/daily`` + streaks, ``/spin``, ``/profile`` (incl. glow toggle), ``/help`` keyboard, ``/font``, ``/ping``, ``/search``, ``/top`` with callback paging, ``/sell``/``/gift``/``/give``, shop + claim views, ``check_ban`` (middleware), ``loading_animation`` (chat-action + draft streaming). Inline-mode pieces live in the inline plugin; see ``inline_search``."
+    },
+    "config": {
+      "status": "adapted",
+      "where": ["waifu/settings.py", "waifu/db/repositories/characters.py", ".env.example"],
+      "note": "Every constant is either a validated ``Settings`` field or a DB row (prices/chances), because in the reference the two could disagree. ``RARITY_DISPLAY`` (the 18 strings) is ``Rarity.display`` in ``waifu/enums.py`` and the two are asserted byte-identical by ``tests/test_uploads.py``. ``ALLOWED_IMAGE_HOSTS`` -> ``ALLOWED_MEDIA_HOSTS``."
+    },
+    "database": {
+      "status": "adapted",
+      "where": ["waifu/db/repositories", "waifu/db/engine.py", "waifu/db/migrations"],
+      "note": "48 hand-rolled SQL helpers -> typed async repositories over the same tables, with ``INSERT OR REPLACE`` replaced by update-in-place so an upload cannot wipe a description, and the schema owned by migrations."
+    },
+    "font": {
+      "status": "ported",
+      "where": ["waifu/utils/font.py", "waifu/plugins/misc.py"],
+      "note": "MONO/FRAKTUR/SCRIPT/DOUBLE maps and ``/font`` selection, stored per player."
+    },
+    "get_emojis": {
+      "status": "superseded",
+      "where": ["scripts/build_catalogue.py", "waifu/tg/text.py"],
+      "note": "A one-off script that patched a ``log_custom_emojis`` handler into main.py to harvest emoji ids from live traffic. Here the ids are configuration (``waifu/data/emoji_map.json``) and the catalogue build reads them, so nothing has to be spliced into the entry point."
+    },
+    "hstats": {
+      "status": "ported",
+      "where": ["waifu/services/hstats.py"],
+      "note": "The stats maths (rarity names, progress bars, item display, md->HTML) behind ``/hstats``/``/hrarity``/``/hcompletion``/``/htop``."
+    },
+    "inline_search": {
+      "status": "ported",
+      "where": ["waifu/plugins/inline.py"],
+      "note": "``inline_search``/``character_result``/``rarity_emoji`` plus the three functions that survive only in the bytecode — ``collection_inline``, ``get_inline_list_result``, ``get_rarity_id`` — i.e. inline roster search *and* 'list my collection' through ``@bot <query>``, with per-result buttons."
+    },
+    "main": {
+      "status": "adapted",
+      "where": ["waifu/core/app.py", "waifu/core/dp.py", "waifu/__main__.py"],
+      "note": "``register_handlers``/``post_init``/``error_handler``/``validate_config`` -> ``register_plugins`` + ``command_menu`` in ``waifu/core/dp.py``, the startup hooks in ``waifu/core/app.py`` (menu, identity, capability negotiation) and ``on_error``, which logs with the update attached instead of printing and continuing. The bytecode-only ``init_sudo_db``/``is_owner``/``is_sudo`` are migration-managed tables + ``waifu/core/access.py``."
+    },
+    "market": {
+      "status": "ported",
+      "where": ["waifu/plugins/market.py", "waifu/plugins/shop.py", "waifu/plugins/economy.py", "waifu/plugins/premium.py"],
+      "note": "``market_cmd``/``market_cb``/``rerender_market``, ``buy_item``, ``inv_cmd``/``inv_via_query``, ``pinfo_cmd``, ``hclaim_command``, ``summon``, ``daily``, ``bomb_cmd``/``steal_cmd``/``skip_cmd``, cooldowns, premium checks. Cooldowns are Redis-backed with a DB fallback rather than a column rewritten per call."
+    },
+    "media_urls": {
+      "status": "ported",
+      "where": ["waifu/tg/media.py"],
+      "note": "``is_allowed_character_image_url``/``require_character_image_url`` -> ``is_allowed_image_url``/``require_image_url`` with the same rule set (https, allow-listed host, no userinfo, a real path), and the same refusal used on *both* ingest doors (``/addchar`` and every URL read back out of the roster)."
+    },
+    "migrate_character_media_to_urls": {
+      "status": "superseded",
+      "where": ["waifu/services/cards.py", "waifu/plugins/uploads.py"],
+      "note": "The reference's one-way migration *away* from file_ids. This bot runs the useful half in both directions: ``/archiveart <id|missing>`` re-hosts hotlinked art into a permanent file_id, and the host buttons offer the URL back out. No offline script needed."
+    },
+    "migrate_sqlite_to_postgres": {
+      "status": "ported",
+      "where": ["scripts/import_summon.py", "waifu/__main__.py"],
+      "note": "Table-by-table copy with type/name mapping (``characters.id`` text -> integer, ``msg_id`` -> typed columns) -> ``python -m waifu import-legacy <summon.db>``; it reads the same columns and reports what it could not carry instead of guessing."
+    },
+    "nguess": {
+      "status": "ported",
+      "where": ["waifu/plugins/nguess.py", "waifu/services/spawn.py"],
+      "note": "``nguess_cmd``/``handle_guess``/``new_session``/``nguess_end``/``send_character``/``react_to_message``/``add_coins``/``ensure_user``/``db_query``/``get_random_character``/``get_fresh_character``/``nguess_dm_block``/``async_react`` -> ``/nguess`` with ``/ngpoll``, ``/ngskip``, ``/ngstats``, ``/ngtop``. DM spam is blocked by the same rule (privacy gate), votes are a poll + reaction tally."
+    },
+    "profile": {
+      "status": "adapted",
+      "where": ["waifu/services/cards.py", "waifu/plugins/players.py"],
+      "note": "PIL profile art (glow rect, rarity badge/ring, ``smart_truncate``, font loading/download) -> ``CardRenderer`` (fonts from ``data/fonts`` with a documented fallback) + ``/profile``, ``/glow``, ``/bio``. Rendering is cached by content signature, and a font-less install still shows a card instead of crashing."
+    },
+    "smoke_test": {
+      "status": "superseded",
+      "where": ["tests"],
+      "note": "Import-and-send smoke checks -> 200-test pytest suite plus ``python -m waifu doctor`` for the live bot."
+    },
+    "storage": {
+      "status": "adapted",
+      "where": ["waifu/db/engine.py", "waifu/db/repositories", "waifu/settings.py"],
+      "note": "The ``?``->``%s`` SQL translator, ``_is_table_info_query``, ``_normalise_value`` and ``using_postgres`` exist only because the reference hand-wrote SQL against two backends; SQLAlchemy removes the class of problem, so the port is 'no equivalent code', and ``configure()``/``connect()`` map onto settings + ``Database.from_settings`` with ``async with db.tx()`` as the savepoint door the middleware uses per update."
+    },
+    "supervisor": {
+      "status": "ported",
+      "where": ["deploy/supervisor.py", "deploy/summon-bot.service.example", "docker-compose.yml"],
+      "note": "Crash-restart loop with the same AUTO_RESTART_MINUTES default (0 = never recycle on a timer), the same SIGTERM/SIGINT handling and 30s grace for the child. Added: N quick failures in a row stop the supervisor with the child's code, because the reference restarted forever and turned a bad DATABASE_URL into an endless chain of identical tracebacks. deploy/summon-bot.service.example wires it to systemd."
+    },
+    "test_bootstrap_postgres": {
+      "status": "superseded",
+      "where": ["tests/test_catalogue_seed.py"],
+      "note": "Reference-side test of the bootstrap guard."
+    },
+    "test_storage_savepoints": {
+      "status": "superseded",
+      "where": ["tests/test_gameplay_flows.py"],
+      "note": "Reference-side test of savepoint behaviour in the SQLite/Postgres shim."
+    }
+  }
+}

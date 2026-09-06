@@ -23,13 +23,16 @@ test:  ## the test suite (in-memory SQLite, real services, no mocks of our own l
 	$(PY) -m pytest tests/ -q
 
 lint:  ## ruff + the generated docs must be current
-	$(PY) -m ruff check waifu tests scripts
-	$(PY) -m ruff format --check waifu tests scripts
+	$(PY) -m ruff check waifu tests scripts deploy
+	$(PY) -m ruff format --check waifu tests scripts deploy
 	$(PY) scripts/gen_reference_docs.py --check
 
 format:  ## apply ruff's fixes and formatting
-	$(PY) -m ruff check waifu tests scripts --fix
-	$(PY) -m ruff format waifu tests scripts
+	$(PY) -m ruff check waifu tests scripts deploy --fix
+	$(PY) -m ruff format waifu tests scripts deploy
+
+extract:  ## regenerate docs/SUMMON_EXTRACT.md from the reference clone (needs xdis + .scratch/summon-ref)
+	$(PY) scripts/extract_summon_reference.py $${SUMMON_REF:-.scratch/summon-ref} --out docs/SUMMON_EXTRACT.md
 
 docs:  ## regenerate docs/COMMANDS.md and docs/SUMMON_PARITY.md from the routers
 	$(PY) scripts/gen_reference_docs.py

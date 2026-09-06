@@ -108,7 +108,15 @@ def render_commands() -> str:
             total += 1
             lines.append(f"| `/{name}` | {doc or '—'} |")
         lines.append("")
-    lines.insert(3, f"**{total} commands across {len(grouped)} plugins.**\n")
+    from waifu.core.dp import AUX_ROUTERS, PLUGIN_ROUTERS
+
+    routers = len(PLUGIN_ROUTERS) + len(AUX_ROUTERS)
+    lines.insert(
+        3,
+        f"**{total} commands across {len(grouped)} plugins ({routers} routers registered — "
+        "the extra ones render no commands: inline mode, the autoadd feed, member/reaction/poll "
+        "updates).**\n",
+    )
     return "\n".join(lines) + "\n"
 
 

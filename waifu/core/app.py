@@ -159,6 +159,14 @@ async def run(*, token: str | None = None, settings: Settings | None = None) -> 
         runner = JobRunner(app.ctx)
         await runner.start()
 
+    # The mini-app JSON API runs in this process (see waifu/api): same engine, same
+    # repositories, so the web view and the chat cannot disagree about a price.
+    api_runner: Any = None
+    if cfg.api_enabled:
+        from waifu.api import serve as serve_api
+
+        api_runner = await serve_api(app.ctx)
+
     try:
         if cfg.mode == "webhook":
             done = await _run_webhooks(app, cfg)
@@ -175,6 +183,8 @@ async def run(*, token: str | None = None, settings: Settings | None = None) -> 
                 handle_signals=True,
             )
     finally:
+        if api_runner is not None:
+            await api_runner.cleanup()
         if runner is not None:
             await runner.stop()
         await app.shutdown()

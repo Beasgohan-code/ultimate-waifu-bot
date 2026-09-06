@@ -15,7 +15,7 @@ Two rules the code follows and this file reflects:
   where they collide with nothing, so muscle memory from the old bot keeps working.
 
 
-**141 commands across 23 plugins.**
+**141 commands across 23 plugins (31 routers registered — the extra ones render no commands: inline mode, the autoadd feed, member/reaction/poll updates).**
 
 ## `misc.py`
 

@@ -48,6 +48,7 @@ PLUGIN_ROUTERS: tuple[str, ...] = (
     "waifu.plugins.moderation",  # warn / warnings / checkwarns / case / banlist
     "waifu.plugins.sudo",  # add/delete money, chance, givelb, broadcasts
     "waifu.plugins.ai",  # setai / ai / charai / chat / ask
+    "waifu.plugins.inline",  # @bot inline search: the roster and your harem, in any chat
     "waifu.plugins.hstats",  # h-stats / h-top / h-usage
     "waifu.plugins.webapp",  # mini-app data API + share
 )
