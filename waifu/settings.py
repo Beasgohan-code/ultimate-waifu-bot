@@ -189,6 +189,25 @@ class Settings(BaseSettings):
     gift_tax_percent: int = 0
     steal_min_target: int = 100
     steal_max_percent: int = 15
+    #: ``/steal`` amounts, ported from ``plugins/market.py``: the reference took a *tiered* slice
+    #: of the balance (20-70% under 1k, 10-30% under 100k, 5-20% under 1M, then a flat
+    #: 1,000-50,000) and had **no** failure roll at all — an attempt either hit or met a shield.
+    #: ``steal_risk`` puts this repo's invented dice back for deployments that want the gamble.
+    steal_tiered: bool = True
+    steal_risk: bool = False
+    #: ``/bomb`` hijacks one random character out of the target's harem and costs one bomb from
+    #: the bag. ``False`` restores the earlier XP-burn rule (which, unlike this, was free to spam).
+    bomb_steals_character: bool = True
+    #: Shop items rot after this many hours (the reference's ``expires_at = now + 24h`` on every
+    #: purchase, filtered on in every query). ``0`` disables expiry.
+    shop_item_ttl_hours: int = 24
+    #: Premium players pay nothing in /market — the reference's "All items are FREE!" line.
+    premium_free_items: bool = True
+    #: ``/hclaim`` rolls the *claim* ladder this many times a day (premium gets more), and premium
+    #: multiplies the high-tier claim weights rather than nudging them by a percent.
+    hclaim_daily_limit: int = 1
+    hclaim_premium_daily_limit: int = 2
+    hclaim_premium_multiplier: float = 3.0
     bomb_min_rarity_id: int = 1
     cooldown_hours_daily: int = 24
     cooldown_hours_spin: int = 24
@@ -217,6 +236,18 @@ class Settings(BaseSettings):
     spam_limit_per_minute: int = 20
     #: Auto-ban groups whose owner enabled it, after N strikes in the window.
     spam_auto_ban_strikes: int = 3
+    #: ``commands_auction.py`` clamped a listing to 5-180 minutes with a 30-minute default and
+    #: refused an opening bid under 100 coins. Those three numbers are the whole economic floor of
+    #: the auction house, so they are settings, not folklore in a handler.
+    auction_default_minutes: int = 30
+    auction_min_minutes: int = 5
+    auction_max_minutes: int = 180
+    auction_min_start_price: int = 100
+    #: Pin the listing in the group like the reference did, and re-edit that pinned caption on a
+    #: debounce so a bidding war cannot trip Telegram's per-message edit flood limit.
+    auction_pin_listings: bool = True
+    auction_refresh_seconds: int = 3
+    auction_custom_bid_seconds: int = 120
     auction_extend_seconds: int = 120
     auction_snipe_window: int = 180
     auction_max_extensions: int = 6

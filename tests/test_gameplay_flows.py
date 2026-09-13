@@ -260,17 +260,25 @@ async def test_redeem_code_pays_once_per_use(ctx, tx, player):
         await ctx.codes.redeem(tx, player, "TESTCODE")
 
 
-async def test_steal_is_blocked_by_a_shield(ctx, tx, player, partner, any_character):
+async def test_bomb_is_blocked_by_a_shield(ctx, tx, player, partner, any_character):
+    """The name said "steal" while the body bombed someone; the test follows the code."""
     from waifu.db.repositories import collection as collection_repo
     from waifu.db.repositories import items as items_repo
 
     await collection_repo.grant(tx, partner, any_character.id, source="test")
     await ctx.items.buy(tx, partner, "bshield", quantity=1)
     await ctx.items.use(tx, partner, "bshield")
+    await ctx.items.buy(tx, player, "bomb", quantity=1)
     assert await items_repo.count_shields(tx, partner, "bshield") == 1
     result = await ctx.economy.bomb(tx, player, partner)
     assert result.get("ok") is False and result.get("shielded"), (
         "a shielded target cannot be bombed"
+    )
+    assert await items_repo.stacks(tx, player, "bomb") == 0, (
+        "a blocked attack still burns the bomb — plugins/market.py deletes the row on both paths"
+    )
+    assert await items_repo.stacks(tx, partner, "bshield") == 0, (
+        "the shield item itself is not the defence; the charge is"
     )
     assert await items_repo.count_shields(tx, partner, "bshield") == 0, (
         "the shield is consumed, not a permanent force field"

@@ -49,10 +49,16 @@ async def send_bag(
     if inventory:
         rows = [["item", "charges", "use"]]
         for entry in inventory:
-            rows.append([entry.name, f"×{entry.owned}", f"/use {entry.key}"])
+            clock = f" · ⌛ {entry.hours_left}h left" if entry.hours_left else ""
+            rows.append([entry.name, f"×{entry.owned}{clock}", f"/use {entry.key}"])
         builder.table(rows, compact=True)
     else:
         builder.paragraph(html="<i>empty — /market has consumables</i>")
+    builder.divider()
+    builder.paragraph(
+        html="💡 <code>/skip 1</code> resets /daily · <code>/skip 2</code> loads a 🛡️ bomb shield · "
+        "<code>/skip 3</code> loads a 🔒 steal shield"
+    )
     if cooldowns:
         builder.divider()
         builder.heading("⏳ on cooldown", size=3)
@@ -135,8 +141,19 @@ async def use_button(
 async def skip(
     message: Message, ctx: AppContext, session: Any, command: CommandObject, access: Access
 ) -> None:
-    """``/skip`` uses a Skip Cooldown item; ``/skip pull`` clears one named cooldown."""
+    """``/skip 1|2|3`` spends one Skip Cooldown ticket, exactly as ``skip_cmd`` did: ``1`` resets
+    ``/daily``, ``2`` loads a 🛡️ bomb shield, ``3`` a 🔒 steal shield. A bare ``/skip`` keeps this
+    port's older behaviour (clear whatever is cooling) because the shop button calls that.
+    """
+    mode = (Args.of(command).first or "").strip()
+    if mode and mode not in ctx.items.SKIP_MODES:
+        await text(message, ctx, ctx.items.SKIP_USAGE)
+        return
     try:
+        if mode:
+            ticket = await ctx.items.skip_mode(session, access.user_id, mode)
+            await text(message, ctx, f"{ticket.effect} · {ticket.stacks_left} ticket(s) left")
+            return
         result = await ctx.items.use(session, access.user_id, "skip")
     except WaifuError as exc:
         # No item: offer the paid alternative instead of a dead end (their /skip said

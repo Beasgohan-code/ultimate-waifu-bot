@@ -25,7 +25,10 @@ from waifu.utils.time import now_utc
 SNIPE_WINDOW = 180
 SNIPE_EXTENSION = 120
 MAX_EXTENSIONS = 6
-MIN_DURATION = 60 * 10
+#: The reference allowed a 5-minute flash auction (``max(5, min(180, …))`` in ``cmd_auction``);
+#: a 10-minute floor silently refused that, and an auction that cannot be short is an auction that
+#: cannot be impulsive. The service clamps with the settings; this is the backstop.
+MIN_DURATION = 60 * 5
 MAX_DURATION = 60 * 60 * 72
 
 
@@ -114,9 +117,19 @@ async def next_minimum(session: AsyncSession, auction_id: int) -> int:
 
 
 async def bid(
-    session: AsyncSession, auction_id: int, bidder_id: int, amount: int
+    session: AsyncSession,
+    auction_id: int,
+    bidder_id: int,
+    amount: int,
+    *,
+    snipe_window: int = SNIPE_WINDOW,
+    snipe_extension: int = SNIPE_EXTENSION,
+    max_extensions: int = MAX_EXTENSIONS,
 ) -> tuple[tuple[Auction, int | None], bool]:
     """Place a bid.
+
+    The three ``snipe_*`` arguments exist so the *settings* drive the guard: the module
+    constants are defaults only, because a knob nobody reads is worse than no knob at all.
 
     Returns ``((auction, outbid_user_id), extended)`` — the service refunds the
     outbid player's stake in the *same* transaction, and uses ``extended`` to
@@ -152,8 +165,8 @@ async def bid(
     assert auction is not None
     remaining = (auction.ends_at - now_utc()).total_seconds()
     extended = False
-    if 0 < remaining <= SNIPE_WINDOW and auction.extensions < MAX_EXTENSIONS:
-        auction.ends_at = auction.ends_at + timedelta(seconds=SNIPE_EXTENSION)
+    if 0 < remaining <= snipe_window and auction.extensions < max_extensions:
+        auction.ends_at = auction.ends_at + timedelta(seconds=snipe_extension)
         auction.extensions += 1
         auction.last_extend_at = now_utc()
         extended = True

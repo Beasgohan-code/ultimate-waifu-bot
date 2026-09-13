@@ -157,6 +157,40 @@ async def consume(
     await session.flush()
 
 
+async def random_owned(
+    session: AsyncSession, user_id: int, *, min_rarity: int = 1, include_locked: bool = False
+) -> tuple[Character, int] | None:
+    """A random character the player actually holds, with the copy count.
+
+    ``/bomb`` uses this (``ORDER BY RANDOM() LIMIT 1`` over ``user_collection`` in the reference),
+    and so does every "steal something" effect. The join is on purpose: the caller needs the
+    character row to name it in the receipt, and a second query there is a TOCTOU window in which
+    the copy can be sold out from under the loot.
+
+    ``include_locked`` defaults to False: the reference looted from ``user_collection`` with no
+    lock check, so a /bomb could take a favourite a player had pinned. Here a locked copy is
+    simply not a candidate, and if that leaves nothing the target is "safe".
+    """
+    row = (
+        await session.execute(
+            select(Ownership, Character)
+            .join(Character, Character.id == Ownership.character_id)
+            .where(
+                Ownership.user_id == user_id,
+                Ownership.count > 0,
+                Character.rarity_id >= int(min_rarity),
+                Character.is_active.is_(True),
+                *([] if include_locked else [Ownership.is_locked.is_(False)]),
+            )
+            .order_by(func.random())
+            .limit(1)
+        )
+    ).first()
+    if row is None:
+        return None
+    return row[1], int(row[0].count)
+
+
 async def has_count(session: AsyncSession, user_id: int, character_id: int) -> int:
     value = (
         await session.execute(

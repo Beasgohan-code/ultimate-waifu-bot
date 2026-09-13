@@ -10,6 +10,7 @@ back: ``/integrity`` proves the invariant, and a test enforces it.
 
 from __future__ import annotations
 
+import html
 from typing import TYPE_CHECKING, Any
 
 from aiogram import F, Router
@@ -310,14 +311,22 @@ async def bomb(
         await refuse(message, exc.user_message)
         return
     if result.get("ok"):
+        loot = result.get("character")
+        line = f"💣 {mention(target)} loses <b>{money(result.get('xp', 0))} xp</b>"
+        if loot:
+            line += (
+                f" and <b>{html.escape(str(loot))}</b> walks out of their collection and into yours"
+            )
         await text(
             message,
             ctx,
-            f"💣 {mention(target)} loses <b>{money(result.get('xp', 0))} xp</b>. Their shields did not save them this time.",
+            line + ". Their shields did not save them this time. One Bomb Item burned.",
         )
     else:
         await text(
-            message, ctx, f"🛡️ {mention(target)} was shielded. Nothing gained, cooldown spent."
+            message,
+            ctx,
+            f"🛡️ Attack Blocked! {mention(target)}'s Bomb Shield ate it — shield and bomb are both gone.",
         )
 
 

@@ -87,14 +87,21 @@ async def send_market(
     builder.paragraph(
         html=f"<b>{money(total)}</b> characters listed · your balance <b>{money(shop.balance)} 🪙</b>"
     )
+    if shop.premium_free:
+        # Their premium shop said so out loud ("All items are FREE!") — a waiver the player has to
+        # discover by trial is a waiver that gets argued about in the group chat.
+        builder.paragraph(html="👑 <b>Premium Mode Active:</b> All items are FREE!")
     if shop.items:
         rows = [["item", "cost", "you have", "what it does"]]
         for entry in shop.items:
             rows.append(
                 [
                     entry.name,
-                    f"{money(entry.cost)} 🪙",
-                    f"{entry.owned}/{entry.max_stack}",
+                    "Free ✨" if entry.free else f"{money(entry.cost)} 🪙",
+                    (
+                        f"{entry.owned}/{entry.max_stack}"
+                        + (f" · ⌛ {entry.hours_left}h" if entry.hours_left else "")
+                    ),
                     shorten(entry.desc, 54),
                 ]
             )
@@ -134,7 +141,10 @@ async def _owned_count(session: Any, user_id: int, character_id: int) -> int:
 
 
 def _plain(shop: Any, hits: list[Any]) -> str:
-    items = "\n".join(f"• {entry.name} — {money(entry.cost)}🪙" for entry in shop.items)
+    items = "\n".join(
+        f"• {entry.name} — {'Free ✨' if entry.free else f'{money(entry.cost)}🪙'}"
+        for entry in shop.items
+    )
     chars = "\n".join(f"{character.id}. {character.name}" for character in hits)
     return f"balance {money(shop.balance)}🪙\n{items}\n{chars}"
 

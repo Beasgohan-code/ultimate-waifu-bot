@@ -9,6 +9,7 @@ which is correct by construction and also gives an exact audit trail.
 from __future__ import annotations
 
 from dataclasses import dataclass
+from datetime import timedelta
 
 from sqlalchemy import and_, func, or_, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -16,6 +17,17 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from waifu.db.models import Cooldown, HeistLog, InventoryItem, Shield
 from waifu.errors import Locked, NotFound
 from waifu.utils.time import now_utc
+
+
+def live():
+    """SQLAlchemy clause: a stack that has not rotted yet.
+
+    ``plugins/market.py`` appended ``AND expires_at > datetime('now')`` to *every* inventory query,
+    which is the whole anti-hoarding rule: buy 5 bombs for tonight's raid or lose them. Rows with
+    no expiry (an admin grant, or anything predating the migration) stay live forever, so the
+    column being nullable is a deliberate door rather than an oversight.
+    """
+    return or_(InventoryItem.expires_at.is_(None), InventoryItem.expires_at > now_utc())
 
 
 @dataclass(frozen=True, slots=True)
@@ -70,7 +82,9 @@ async def stacks(session: AsyncSession, user_id: int, item_id: str) -> int:
         (
             await session.execute(
                 select(func.coalesce(func.sum(InventoryItem.uses_remaining), 0)).where(
-                    InventoryItem.user_id == user_id, InventoryItem.item_id == item_id
+                    InventoryItem.user_id == user_id,
+                    InventoryItem.item_id == item_id,
+                    live(),
                 )
             )
         ).scalar_one()
@@ -81,15 +95,42 @@ async def stacks(session: AsyncSession, user_id: int, item_id: str) -> int:
 async def inventory(session: AsyncSession, user_id: int) -> dict[str, int]:
     rows = (
         await session.execute(
-            select(InventoryItem.item_id, func.coalesce(func.sum(InventoryItem.uses_remaining), 0))
-            .where(InventoryItem.user_id == user_id)
+            select(
+                InventoryItem.item_id,
+                func.coalesce(func.sum(InventoryItem.uses_remaining), 0),
+            )
+            .where(InventoryItem.user_id == user_id, live())
             .group_by(InventoryItem.item_id)
         )
     ).all()
     return {str(r[0]): int(r[1]) for r in rows if int(r[1]) > 0}
 
 
-async def buy(session: AsyncSession, user_id: int, item_id: str, *, quantity: int = 1) -> int:
+async def expiry_hours(session: AsyncSession, user_id: int) -> dict[str, int]:
+    """How long each stack lasts, in whole hours, for ``/inv``'s ``⌛ 7h left`` line."""
+    rows = (
+        await session.execute(
+            select(
+                InventoryItem.item_id,
+                func.max(InventoryItem.expires_at),
+            )
+            .where(InventoryItem.user_id == user_id, InventoryItem.uses_remaining > 0, live())
+            .group_by(InventoryItem.item_id)
+        )
+    ).all()
+    now = now_utc()
+    out: dict[str, int] = {}
+    for key, until in rows:
+        if until is None:
+            continue
+        seconds = (until - now).total_seconds()
+        out[str(key)] = max(0, int(seconds // 3600) + (1 if seconds % 3600 else 0))
+    return out
+
+
+async def buy(
+    session: AsyncSession, user_id: int, item_id: str, *, quantity: int = 1, ttl_hours: int = 0
+) -> int:
     """Add uses to the player's inventory. Price/debit is the caller's job (economy.debit).
 
     Enforces the per-item stack cap so /market can't be used to hoard 400 bombs.
@@ -109,13 +150,21 @@ async def buy(session: AsyncSession, user_id: int, item_id: str, *, quantity: in
             .limit(1)
         )
     ).scalar_one_or_none()
+    until = now_utc() + timedelta(hours=ttl_hours) if ttl_hours and ttl_hours > 0 else None
     if row is None:
         row = InventoryItem(
-            user_id=user_id, item_id=item_id, uses_remaining=quantity * spec.charges
+            user_id=user_id,
+            item_id=item_id,
+            uses_remaining=quantity * spec.charges,
+            expires_at=until,
         )
         session.add(row)
     else:
         row.uses_remaining += quantity * spec.charges
+        # A fresh purchase re-arms the clock (the reference inserted a new 24h row per buy; this
+        # table stacks, so topping up *and* extending is what keeps the two behaviours equal).
+        if until is not None and (row.expires_at is None or row.expires_at < until):
+            row.expires_at = until
     await session.flush()
     return quantity
 
@@ -130,8 +179,9 @@ async def spend(session: AsyncSession, user_id: int, item_id: str, *, count: int
                     InventoryItem.user_id == user_id,
                     InventoryItem.item_id == item_id,
                     InventoryItem.uses_remaining > 0,
+                    live(),
                 )
-                .order_by(InventoryItem.uses_remaining.asc())
+                .order_by(InventoryItem.expires_at.asc().nulls_last())
                 .with_for_update(skip_locked=True)
                 .limit(20)
             )

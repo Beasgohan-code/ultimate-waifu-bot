@@ -128,7 +128,7 @@ Two rules the code follows and this file reflects:
 | --- | --- |
 | `/heists` | — |
 | `/shop` | — |
-| `/skip` | /skip uses a Skip Cooldown item; /skip pull clears one named cooldown. |
+| `/skip` | 1 resets |
 | `/use` | — |
 
 ## `auctions.py`

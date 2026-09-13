@@ -107,6 +107,28 @@ async def _indexes(conn: AsyncConnection) -> None:
             raise
 
 
+async def _inventory_expiry(conn: AsyncConnection) -> None:
+    """``user_inventory.expires_at`` — the item TTL the reference always had.
+
+    Same inspector dance as :func:`_file_id_columns`: SQLite has no ``IF NOT EXISTS`` for
+    columns, and the step must be a no-op on a greenfield install that already built it from the
+    ORM metadata.
+    """
+    from sqlalchemy import inspect as sa_inspect
+
+    def _existing(sync_conn: object) -> set[str]:
+        return {row["name"] for row in sa_inspect(sync_conn).get_columns("user_inventory")}
+
+    if "expires_at" not in await conn.run_sync(_existing):
+        await conn.execute(text("ALTER TABLE user_inventory ADD COLUMN expires_at TIMESTAMP"))
+    await conn.execute(
+        text(
+            "CREATE INDEX IF NOT EXISTS ix_inventory_expiry "
+            "ON user_inventory (user_id, item_id, expires_at)"
+        )
+    )
+
+
 MIGRATIONS: tuple[Migration, ...] = (
     Migration(
         "2026_09_01_0001_core_schema", "create every table from the ORM metadata", _core_schema
@@ -129,6 +151,11 @@ MIGRATIONS: tuple[Migration, ...] = (
         "2026_09_05_0005_hot_indexes",
         "partial + trigram indexes for spawn/auction/search",
         _indexes,
+    ),
+    Migration(
+        "2026_09_13_0006_inventory_expiry",
+        "user_inventory.expires_at (shop item TTL)",
+        _inventory_expiry,
     ),
 )
 

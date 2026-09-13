@@ -21,12 +21,13 @@ from typing import Any
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from waifu.db.models import Character
+from waifu.db.repositories import collection as collection_repo
 from waifu.db.repositories import economy as ledger
 from waifu.db.repositories import items as items_repo
 from waifu.db.repositories import progress as progress_repo
 from waifu.db.repositories import users as users_repo
 from waifu.enums import LedgerReason, Rarity
-from waifu.errors import AlreadyClaimed, CooldownActive, WaifuError
+from waifu.errors import AlreadyClaimed, CooldownActive, NotFound, WaifuError
 from waifu.services.base import Service
 from waifu.utils.rng import system_random
 from waifu.utils.time import human_delta
@@ -51,6 +52,27 @@ WORK_JOBS: tuple[tuple[str, int, int], ...] = (
     ("subtitling an episode", 400, 1100),
     ("walking the shipyard docks", 300, 850),
 )
+
+
+def steal_slice(target_balance: int, rng: object | None = None) -> int:
+    """How much one /steal takes from a balance, mirroring ``plugins/market.py``.
+
+    Pure on purpose: the tiers are the number players argue about, so they get tested without a
+    database (``tests/test_market_parity.py``) and any future command can quote the same table.
+    """
+    draw = (rng if rng is not None else system_random).random
+    balance = int(target_balance)
+    if balance < 1_000:
+        percent = draw() * 50 + 20
+        return int(balance * percent / 100)
+    if balance < 100_000:
+        percent = draw() * 20 + 10
+        return int(balance * percent / 100)
+    if balance < 1_000_000:
+        percent = draw() * 15 + 5
+        return int(balance * percent / 100)
+    return int(draw() * 49_000 + 1_000)
+
 
 STEAL_RISK = 0.42  # base failure chance
 STEAL_PENALTY_PERCENT = 10  # paid to the victim when the steal fails
@@ -344,9 +366,23 @@ class EconomyService(Service):
             return {"ok": False, "reason": "target is too broke to bother", "amount": 0}
 
         shielded = await items_repo.pop_shield(session, target_id, "sshield")
+        # The reference /steal had no failure roll at all: a shieldless target always paid. That is
+        # the honest default (``steal_risk=False``) because a coin flip that burns an hour of
+        # cooldown *and* the penalty on a loss reads as a punishment for using the feature; the
+        # old dice stays available for servers that want the gamble.
         risk = STEAL_RISK - (0.08 if attacker_premium else 0.0) + (0.05 if target_premium else 0.0)
-        success = not shielded and system_random.random() > risk
-        stake = int(target_balance * self.settings.steal_max_percent / 100)
+        chance = 1.0 - risk if self.settings.steal_risk else 1.0
+        success = not shielded and system_random.random() < chance
+        # ``steal_tiered`` is the reference's own ladder — 20-70% under 1,000 coins, 10-30% under
+        # 100,000, 5-20% under a million, and a flat 1,000-50,000 above that so a whale can never
+        # be drained by one click. ``steal_max_percent`` stays as the single-slice cap for bots
+        # configured back to a flat share.
+        stake = (
+            steal_slice(target_balance)
+            if self.settings.steal_tiered
+            else int(target_balance * self.settings.steal_max_percent / 100)
+        )
+        stake = min(stake, target_balance)
         await items_repo.set_cooldown(session, attacker_id, "steal")
         if success:
             await ledger.transfer(
@@ -404,13 +440,25 @@ class EconomyService(Service):
         )
         if left:
             raise CooldownActive(left)
+        # A bomb is consumed by the attempt, and a blocked one consumes the defender's shield too:
+        # that pairing is what makes "Attack Blocked!" cost something on both sides. The reference
+        # deleted one bomb row from the attacker and one shield row from the target in the same
+        # handler, and — unlike this port — it never checked the attacker held a bomb at all, which
+        # made the daily attack free.
+        held = await items_repo.stacks(session, attacker_id, "bomb")
+        if held <= 0:
+            raise NotFound(
+                "you have no Bomb Item to throw — /market sells them, and the cooldown only starts "
+                "when you actually throw one."
+            )
         shielded = await items_repo.pop_shield(session, target_id, "bshield")
+        await items_repo.spend(session, attacker_id, "bomb")
         await items_repo.set_cooldown(session, attacker_id, "bomb")
         if shielded:
             await items_repo.log_heist(
                 session, attacker_id=attacker_id, target_id=target_id, kind="bomb", outcome="shield"
             )
-            return {"ok": False, "shielded": True, "xp": 0}
+            return {"ok": False, "shielded": True, "xp": 0, "character": None}
         victim = await users_repo.get(session, target_id)
         stolen = int((victim.exp if victim else 0) * 0.1)
         if victim is not None and stolen > 0:
@@ -419,15 +467,27 @@ class EconomyService(Service):
             if attacker is not None:
                 attacker.exp += stolen // 2
             await session.flush()
+        loot = None
+        if self.settings.bomb_steals_character:
+            # Their /bomb was never about XP: it picked one random owned character with
+            # ``ORDER BY RANDOM() LIMIT 1`` and moved it to the attacker. Taking the copy through
+            # ``consume``/``grant`` in the same transaction is what makes it safe to run twice —
+            # the row-level lock means the target cannot sell it mid-blast.
+            prize = await collection_repo.random_owned(session, target_id)
+            if prize is not None:
+                character, _count = prize
+                await collection_repo.consume(session, target_id, character.id)
+                await collection_repo.grant(session, attacker_id, character.id, source="bomb")
+                loot = character.name
         await items_repo.log_heist(
             session,
             attacker_id=attacker_id,
             target_id=target_id,
             kind="bomb",
-            outcome="success",
+            outcome="steal" if loot else "success",
             amount=stolen,
         )
-        return {"ok": True, "shielded": False, "xp": stolen}
+        return {"ok": True, "shielded": False, "xp": stolen, "character": loot}
 
     # ---------------------------------------------------------------- admin
     async def admin_grant(

@@ -36,8 +36,8 @@ Reference surface: **110 names and aliases**. Wired here: **109**.
 | `/balance` | ✅ wired | wallet |
 | `/ban` | ✅ wired | group ban |
 | `/banner` | ✅ wired | banner characters |
-| `/bid` | ✅ wired | place a bid |
-| `/bomb` | ✅ wired | attack a player |
+| `/bid` | ✅ wired | place a bid (escrowed; or reply with a number after the custom-bid prompt) |
+| `/bomb` | ✅ wired | spend one Bomb: burns their shield charge, else hijacks a random unlocked copy |
 | `/broadcast` | ✅ wired | announce |
 | `/buy` | ✅ wired | buy from market |
 | `/cancelauction` | ✅ wired | cancel own auction |
@@ -68,7 +68,7 @@ Reference surface: **110 names and aliases**. Wired here: **109**.
 | `/grab` | ✅ wired | alias |
 | `/guess` | ✅ wired | alias |
 | `/harem` | ✅ wired | alias |
-| `/hclaim` | ✅ wired | free claim |
+| `/hclaim` | ✅ wired | free claim from the claim ladder (premium: 2/day, high tiers boosted) |
 | `/help` | ✅ wired | command list |
 | `/history` | ✅ wired | wallet history |
 | `/hmode` | ✅ wired | collection display mode |
@@ -104,7 +104,7 @@ Reference surface: **110 names and aliases**. Wired here: **109**.
 | `/restart` | ✅ wired | bot control |
 | `/rmmoney` | ✅ wired | admin coins |
 | `/rmsudo` | ✅ wired | staff role |
-| `/rob` | ✅ wired | alias |
+| `/rob` | ✅ wired | take a tier of their purse (20-70% under 1,000 … flat 1,000-50,000 above 1M) |
 | `/savegroup` | ✅ wired | alias |
 | `/search` | ✅ wired | roster search |
 | `/sell` | ✅ wired | sell copies |
@@ -113,7 +113,7 @@ Reference surface: **110 names and aliases**. Wired here: **109**.
 | `/setchance` | ✅ wired | edit drop ladder |
 | `/setclaim` | ✅ wired | edit the claim ladder |
 | `/shop` | ✅ wired | item shop |
-| `/skip` | ✅ wired | skip an item cooldown |
+| `/skip` | ✅ wired | 1 resets /daily, 2 loads a bomb shield, 3 a steal shield |
 | `/spawn` | ✅ wired | trigger a spawn |
 | `/spin` | ✅ wired | coin wheel |
 | `/start` | ✅ wired | welcome + register |

@@ -17,7 +17,7 @@ from __future__ import annotations
 
 import secrets
 from dataclasses import dataclass, field
-from typing import Any
+from typing import Any, ClassVar
 
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -53,6 +53,16 @@ class ShopEntry:
     owned: int
     desc: str
     max_stack: int = 1
+    #: Hours until the stack rots (0 = permanent). The reference printed ``⌛ 7h left`` per line
+    #: of ``/inv`` because its items expire; a bag that silently loses its bombs needs a clock.
+    hours_left: int = 0
+    #: True when premium waived the price (``premium_free_items``), not when the item is free
+    #: in the catalogue — the receipt has to say which of the two happened.
+    free: bool = False
+
+    @property
+    def expiry_text(self) -> str:
+        return "∞" if not self.hours_left else f"{self.hours_left}h"
 
     @property
     def emoji(self) -> str:
@@ -87,6 +97,9 @@ class Shop:
     refreshes_left: int = FREE_REFRESHES
     refresh_cost: int = 0
     balance: int = 0
+    #: The reference announced it in the header ("All items are FREE!"), and a shop that quietly
+    #: charges 0 while the player thinks it is a sale is a support ticket.
+    premium_free: bool = False
 
 
 @dataclass(slots=True)
@@ -101,6 +114,21 @@ class UseResult:
 
 class ItemService(Service):
     # ------------------------------------------------------------------- shop
+    def price_of(self, definition: items_repo.ItemDef, *, premium: bool) -> int:
+        """What one stack costs this player right now.
+
+        ``plugins/market.py`` charged premium players nothing and told them so ("All items are
+        FREE!"), which is a licence to print coins unless the cap is what you want: the reference
+        relied on the 24h expiry and the per-item stack cap to keep it bounded, and so does this,
+        which is why both are settings rather than an assumption.
+        """
+        if premium and self.settings.premium_free_items:
+            return 0
+        return int(definition.cost)
+
+    async def is_premium(self, session: AsyncSession, user_id: int) -> bool:
+        return await ledger.premium_left_hours(session, user_id) > 0
+
     async def shop(
         self,
         session: AsyncSession,
@@ -108,15 +136,20 @@ class ItemService(Service):
         *,
         refresh: bool = False,
         rarity: str = "featured",
+        premium: bool | None = None,
     ) -> Shop:
+        entitled = await self.is_premium(session, user_id) if premium is None else premium
+        expiries = await items_repo.expiry_hours(session, user_id)
         entries = [
             ShopEntry(
                 key=definition.key,
                 name=definition.name,
-                cost=definition.cost,
+                cost=self.price_of(definition, premium=entitled),
                 desc=definition.desc,
                 max_stack=definition.max_stack,
                 owned=await items_repo.stacks(session, user_id, definition.key),
+                hours_left=expiries.get(definition.key, 0),
+                free=bool(entitled and self.settings.premium_free_items),
             )
             for definition in items_repo.ITEMS.values()
         ]
@@ -163,7 +196,7 @@ class ItemService(Service):
         else:
             ids = list((pool.characters or {}).get("ids") or [])
             featured = (
-                list(await char_repo.get_many(session, ids).values())
+                list((await char_repo.get_many(session, ids)).values())
                 if ids
                 else await self._roll_featured(session, rarity=rarity)
             )
@@ -195,6 +228,7 @@ class ItemService(Service):
             refreshes_left=left,
             refresh_cost=self.settings.shop_refresh_cost,
             balance=await ledger.balance(session, user_id),
+            premium_free=bool(entitled and self.settings.premium_free_items),
         )
 
     def _roll_item_pool(self) -> list[str]:
@@ -227,8 +261,15 @@ class ItemService(Service):
         # coin printer. Order matters — add stacks first (it clamps to the stack cap),
         # then charge for what actually landed; a failed debit rolls the stacks back
         # with it because both live in the caller's transaction.
-        spent = await items_repo.buy(session, user_id, definition.key, quantity=max(1, quantity))
-        cost = int(definition.cost) * spent
+        entitled = await self.is_premium(session, user_id)
+        spent = await items_repo.buy(
+            session,
+            user_id,
+            definition.key,
+            quantity=max(1, quantity),
+            ttl_hours=int(self.settings.shop_item_ttl_hours),
+        )
+        cost = self.price_of(definition, premium=entitled) * spent
         if cost:
             await ledger.debit(
                 session,
@@ -279,6 +320,7 @@ class ItemService(Service):
     # --------------------------------------------------------------- inventory
     async def inventory(self, session: AsyncSession, user_id: int) -> list[ShopEntry]:
         owned = await items_repo.inventory(session, user_id)
+        expiries = await items_repo.expiry_hours(session, user_id)
         out: list[ShopEntry] = []
         for key, count in owned.items():
             if count <= 0:
@@ -295,9 +337,51 @@ class ItemService(Service):
                     desc=definition.desc,
                     max_stack=definition.max_stack,
                     owned=count,
+                    hours_left=expiries.get(key, 0),
                 )
             )
         return sorted(out, key=lambda e: e.name)
+
+    #: ``/skip 1`` clears the daily-reward cooldown, ``2`` loads a bomb shield, ``3`` a steal
+    #: shield: the three modes ``plugins/market.py`` gave the ticket, kept as data so the command,
+    #: the shop button and the tests all read one table.
+    SKIP_MODES: ClassVar[dict[str, str]] = {"1": "daily", "2": "bshield", "3": "sshield"}
+    SKIP_USAGE: ClassVar[str] = (
+        "💡 <b>Multi-Purpose Skip Cooldown Usage:</b>\n"
+        "• <code>/skip 1</code> ➡️ Reset /daily Reward Cooldown\n"
+        "• <code>/skip 2</code> ➡️ Consume ticket &amp; load 1 🛡️ Bomb Shield\n"
+        "• <code>/skip 3</code> ➡️ Consume ticket &amp; load 1 🔒 Steal Shield"
+    )
+
+    async def skip_mode(self, session: AsyncSession, user_id: int, mode: str) -> UseResult:
+        """Spend one Skip Cooldown ticket on exactly one of the three reference modes.
+
+        The reference burned the ticket on every path it reached, including the two that then
+        returned "you have nothing to skip" — a 25,000-coin ticket lost to a typo. Here the effect
+        is resolved first and the ticket is spent last, so a no-op is free.
+        """
+        if mode not in self.SKIP_MODES:
+            raise Locked(self.SKIP_USAGE)
+        if await items_repo.stacks(session, user_id, "skip") <= 0:
+            raise NotFound("Skip Ticket Missing! Buy one from /market.")
+        target = self.SKIP_MODES[mode]
+        if target == "daily":
+            cleared = await items_repo.clear_cooldown(session, user_id, "daily")
+            if not cleared:
+                raise AlreadyClaimed("your /daily reward is already available to claim!")
+            effect = "⏰ daily cooldown cleared — claim /daily now"
+        else:
+            total = await items_repo.add_shields(session, user_id, target, 1)
+            label = "🛡️ bomb shield" if target == "bshield" else "🔒 steal shield"
+            effect = f"{label} loaded ({total} charge(s) on file)"
+        left = await items_repo.spend(session, user_id, "skip")
+        return UseResult(
+            key="skip",
+            name=items_repo.item("skip").name,
+            effect=effect,
+            stacks_left=left,
+            details={"mode": mode, "tickets_left": left},
+        )
 
     async def use(
         self, session: AsyncSession, user_id: int, key: str, *, target_id: int | None = None

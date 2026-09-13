@@ -352,12 +352,18 @@ class InventoryItem(Base):
     )
     item_id: Mapped[str] = mapped_column(String(24), nullable=False)
     uses_remaining: Mapped[int] = mapped_column(Integer, default=1, nullable=False)
+    #: Shop items rot. ``plugins/market.py`` wrote ``expires_at = datetime('now','+24 hours')`` on
+    #: every purchase and filtered on it in *every* query — the anti-hoarding rule that also
+    #: explains why a shield bought for tomorrow's raid is gone by tomorrow. ``None`` means
+    #: permanent (an admin grant, or a pre-migration row), which is why it is nullable.
+    expires_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     activated_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now)
 
     __table_args__ = (
         CheckConstraint("uses_remaining >= 0", name="uses_not_negative"),
         Index("ix_inventory_lookup", "user_id", "item_id", "uses_remaining"),
+        Index("ix_inventory_expiry", "user_id", "item_id", "expires_at"),
     )
 
 

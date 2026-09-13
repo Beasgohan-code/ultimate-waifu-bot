@@ -78,6 +78,10 @@ class PullResult:
     balance: int = 0
     pity: progress_repo.PityState | None = None
     seed_reveal: str = ""
+    #: ``/hclaim`` counters (``Claims Today: n/max``) — 0 when the roll was a paid pull.
+    claims_today: int = 0
+    claims_limit: int = 0
+    premium_claim: bool = False
 
     @property
     def best(self) -> RollResult:
@@ -106,6 +110,12 @@ class GachaService(Service):
         if not premium:
             return table
         boost = 1.0 + self.settings.premium_claim_boost_percent / 100
+        if claim:
+            # ``hclaim_premium_multiplier`` is their ``chance * 3.0`` on HIGH_RARITIES inside
+            # ``hclaim_command`` — a separate knob because the claim ladder and the paid ladder are
+            # separate marketing decisions in the reference, and collapsing them into one boost
+            # percent would silently nerf premium claims to the paid curve.
+            boost *= float(self.settings.hclaim_premium_multiplier)
         weighted = [(r, c * boost if int(r) >= HIGH_TIER_FLOOR else c) for r, c in table]
         total = sum(c for _, c in weighted) or 1.0
         return [(r, c / total * 100.0) for r, c in weighted]
@@ -152,7 +162,13 @@ class GachaService(Service):
         sequence = await progress_repo.next_sequence(session, user_id)
         seed = user.server_seed or ""
         commitment = user.seed_commitment or commit(seed)
-        table = await self.odds(session, premium=premium)
+        table = await self.odds(session, premium=premium, claim=(kind == PullKind.FREE_DAILY))
+        if not table:
+            from waifu.errors import NotFound
+
+            raise NotFound(
+                "every edition is switched off for this roll, so there is nothing to claim"
+            )
         rarities = [r for r, _ in table]
         weights = [c for _, c in table]
         pity = await progress_repo.pity(session, user_id)
@@ -286,6 +302,33 @@ class GachaService(Service):
         return self.settings.pull_cost * max(1, batch)
 
     # -------------------------------------------------------- /hclaim (free)
+    #: ``users.last_hclaim_count`` in the reference: a per-day counter that premium doubles.
+    #: ``DailyClaim`` is UNIQUE on (kind, local_day), so roll *n* of a day claims slot
+    #: ``hclaim`` and ``hclaim:2`` instead of inserting the same kind twice.
+    def claim_slot(self, index: int) -> str:
+        return "hclaim" if index <= 0 else f"hclaim:{index}"
+
+    def claim_limit(self, premium: bool) -> int:
+        value = (
+            self.settings.hclaim_premium_daily_limit
+            if premium
+            else self.settings.hclaim_daily_limit
+        )
+        return max(1, int(value))
+
+    async def claims_today(
+        self, session: AsyncSession, user_id: int, *, premium: bool = False
+    ) -> tuple[int, int]:
+        """``(rolls already used today, this player's daily limit)``."""
+        day = self.local_day()
+        limit = self.claim_limit(premium)
+        used = 0
+        for index in range(limit):
+            if not await ledger.claimed(session, user_id, self.claim_slot(index), day):
+                break
+            used += 1
+        return used, limit
+
     async def free_claim(
         self, session: AsyncSession, user_id: int, *, premium: bool = False
     ) -> PullResult:
@@ -293,14 +336,26 @@ class GachaService(Service):
 
         Capped at ``spawn_high_tier_ceiling`` unless premium: a free daily roll that
         can hit Celestial destroys the paid loop (and the reference bot's economy
-        within a week).
+        within a week). Premium gets ``hclaim_premium_daily_limit`` rolls a day and the
+        boosted high-tier weights, mirroring ``hclaim_command``.
         """
         day = self.local_day()
-        claimed = await ledger.claimed(session, user_id, "hclaim", day)
-        if claimed:
+        used, limit = await self.claims_today(session, user_id, premium=premium)
+        if used >= limit:
             from waifu.errors import AlreadyClaimed
 
-            raise AlreadyClaimed("no free claim left today")
+            noun = f"{limit} random characters" if limit > 1 else "1 random character"
+            raise AlreadyClaimed(
+                f"You can only claim {noun} per day! Come back after: "
+                f"{self.seconds_until_reset(utc_offset_hours=0) // 3600}h"
+            )
+        # ``normalised_odds(claim=True)`` falls back to the paid ladder when no edition is
+        # flagged claimable, so the check has to read the claim table itself — the reference
+        # selected ``FROM claim_list WHERE chance > 0`` and refused when that came back empty.
+        if not await char_repo.claim_chances(session):
+            from waifu.errors import WaifuError
+
+            raise WaifuError("All claimable editions are currently turned OFF!")
         result = await self.pull(
             session,
             user_id,
@@ -310,6 +365,11 @@ class GachaService(Service):
             free=True,
             cooldown_key=None,
         )
+        # Their claim refused rather than inventing a roll when the roster has no characters at all.
+        if not result.rolls:
+            from waifu.errors import NotFound
+
+            raise NotFound("the roster is empty — an admin has to /upload characters first")
         # Cap the outcome: rewrite the award if the claim table exceeded the ceiling.
         ceiling = Rarity.from_value(self.settings.spawn_high_tier_ceiling)
         if not premium and any(int(r.rarity) > int(ceiling) for r in result.rolls):
@@ -326,7 +386,10 @@ class GachaService(Service):
                         roll.anime = downgrade.anime or ""
                         roll.rarity = ceiling
                         roll.image = downgrade.image_ref()
-        await ledger.claim_once(session, user_id, "hclaim", day)
+        await ledger.claim_once(session, user_id, self.claim_slot(used), day)
+        result.claims_today = used + 1
+        result.claims_limit = limit
+        result.premium_claim = bool(premium)
         return result
 
     # ------------------------------------------------------------- auditing

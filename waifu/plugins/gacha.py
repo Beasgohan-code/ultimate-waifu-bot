@@ -82,8 +82,24 @@ async def do_pull(
     await render_pull(event, ctx, session, result=result, user_id=user_id)
 
 
+def _claim_footer(result: Any) -> str:
+    """The counters ``hclaim_command`` printed under the card (premium tag + Claims Today)."""
+    bits = []
+    if getattr(result, "premium_claim", False):
+        bits.append("👑 <b>Premium Claim Active</b> (high-edition chance boosted)")
+    if getattr(result, "claims_limit", 0):
+        bits.append(f"📊 <b>Claims Today:</b> {result.claims_today}/{result.claims_limit}")
+    return " · ".join(bits)
+
+
 async def render_pull(
-    event: Message | CallbackQuery, ctx: AppContext, session: Any, *, result: Any, user_id: int
+    event: Message | CallbackQuery,
+    ctx: AppContext,
+    session: Any,
+    *,
+    result: Any,
+    user_id: int,
+    footer: str = "",
 ) -> None:
     rolls = list(result.rolls)
     best = (
@@ -93,6 +109,8 @@ async def render_pull(
     )
     builder = RichMessageBuilder()
     builder.heading(_headline(rolls, best), size=1)
+    if footer:
+        builder.paragraph(html=footer)
     if best is not None and getattr(best, "image", ""):
         builder.photo(
             str(best.image),
@@ -217,7 +235,17 @@ async def hclaim(
     except AlreadyClaimed as exc:
         await text(message, ctx, f"🎟️ {exc.user_message} Next one in <b>{_until_reset(ctx)}</b>.")
         return
-    await render_pull(message, ctx, session, result=result, user_id=access.user_id)
+    except WaifuError as exc:
+        await text(message, ctx, f"❌ {exc.user_message}")
+        return
+    await render_pull(
+        message,
+        ctx,
+        session,
+        result=result,
+        user_id=access.user_id,
+        footer=_claim_footer(result),
+    )
 
 
 @router.callback_query(F.data == "gacha:claim")
@@ -231,7 +259,14 @@ async def claim_button(
     except (NotEnoughFunds, AlreadyClaimed, CooldownActive, WaifuError) as exc:
         await _failure(callback_query, ctx, exc)
         return
-    await render_pull(callback_query, ctx, session, result=result, user_id=access.user_id)
+    await render_pull(
+        callback_query,
+        ctx,
+        session,
+        result=result,
+        user_id=access.user_id,
+        footer=_claim_footer(result),
+    )
 
 
 def _until_reset(ctx: AppContext) -> str:
