@@ -388,7 +388,14 @@ async def custom_bid_ask(
     await text(callback_query, ctx, prompt)
 
 
-@router.message(F.chat.type == "private", F.text, ~F.text.startswith("/"))
+#: ``auction_bid_input`` in the reference accepted any private non-command text, which meant a
+#: stray word inside the 120s window was silently eaten by the auction. The filter now matches a
+#: number and nothing else, so this handler cannot swallow another private conversation (an
+#: upload reply, a code redemption) that happens to land in the same two minutes.
+NUMBER_ONLY = F.text.regexp(r"^[\d.,\u2009 ]{1,24}$")
+
+
+@router.message(F.chat.type == "private", NUMBER_ONLY)
 async def custom_bid_reply(message: Message, ctx: AppContext, session: Any, access: Access) -> None:
     """The other half of ✏️: one bare number, dot-or-comma grouped, inside the window."""
     auction_id = await ctx.cache.get(CUSTOM_NS, access.user_id) if ctx.cache is not None else None
