@@ -1,0 +1,120 @@
+[project]
+name = "ultimate-waifu-bot"
+version = "1.0.0"
+description = "Telegram character-collection gacha bot — aiogram 3, Bot API 10.3, plugin architecture"
+readme = "README.md"
+requires-python = ">=3.11,<3.15"
+license = { text = "MIT" }
+authors = [{ name = "Beasgohan-code" }]
+keywords = ["telegram", "bot", "aiogram", "gacha", "collection", "economy"]
+
+# Runtime is deliberately small: no duplicate bot frameworks, no dead weight.
+# (Summon-bot pinned python-telegram-bot + pyTelegramBotAPI + kurigram at once.)
+dependencies = [
+    "aiogram==3.31.0",          # Bot API 10.3: rich messages, drafts, ephemeral msgs, guest mode, checklists
+    "SQLAlchemy[asyncio]>=2.0.36",
+    "asyncpg>=0.30",            # production driver (DATABASE_URL=postgresql+asyncpg://...)
+    "aiosqlite>=0.20",          # dev/test driver (DATABASE_URL=sqlite+aiosqlite:///...)
+    "pydantic>=2.9,<2.12",
+    "pydantic-settings>=2.6",
+    "redis>=5.2",               # FSM storage + rate limits + pub/sub (optional, in-memory fallback)
+    "Pillow>=11.0",             # profile / collection card rendering
+    "httpx>=0.28",              # AI persona backend + external media
+    "orjson>=3.10",
+    "aiohttp>=3.11",          # webhook transport (via aiogram) and the mini-app JSON API
+    "pytz>=2024.1",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=8.3",
+    "pytest-asyncio>=0.24",
+    "ruff>=0.15",
+    "mypy>=1.13",
+    "bandit[toml]>=1.7",
+    # xdis decodes the reference deployment's __pycache__ so `make extract` can inventory
+    # functions that were deleted from its source tree (docs/SUMMON_EXTRACT.md).
+    "xdis>=6.1",
+]
+
+[project.scripts]
+waifu-bot = "waifu.__main__:cli"
+
+[project.urls]
+Homepage = "https://github.com/Beasgohan-code/ultimate-waifu-bot"
+
+[build-system]
+requires = ["setuptools>=75"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools.packages.find]
+include = ["waifu*"]
+
+[tool.setuptools.package-data]
+waifu = ["data/*.json", "data/locales/*.json", "web/static/*"]
+
+# --------------------------------------------------------------------------- lint
+[tool.ruff]
+target-version = "py311"
+line-length = 100
+src = ["waifu", "tests"]
+
+[tool.ruff.lint]
+select = [
+    "E", "F", "W", "I", "UP", "B", "C4", "SIM", "RUF", "ASYNC",
+    "S", "ANN001", "ANN201", "DTZ", "PL", "PERF",
+]
+ignore = [
+    "E501",     # line length handled by formatter
+    "E402",     # conftest must set WAIFU_TEST_MODE before importing the app
+    "PLR2004",  # tuning constants (odds floors, row caps, glyph widths) read better inline
+    "PERF401",  # an explicit loop with a comment beats a comprehension when the comment is the point
+    "SIM105", "S110",  # "best-effort Telegram call" is try/except/pass by design; see tg/notify.py
+    "PLR0917",  # aiogram handlers take (message, ctx, session, access, …) — that is the framework
+    "PLC0415",  # deferred imports are deliberate: optional deps + service cycle-breaking
+    "PLR0913",  # Telegram handlers legitimately take (message, bot, state, ...)
+    "S101",     # assert in tests
+    "RUF001", "RUF002", "RUF003",  # we intentionally use emoji/unicode in user-facing text
+]
+
+[tool.ruff.lint.per-file-ignores]
+"tests/*" = ["S101", "ANN", "PLR2004", "B017", "DTZ", "S106", "PLW0603"]
+# One-off scripts run once, by an operator, against a database they own: they get to build
+# SQL text and use date.today(). The *bot* does not (see waifu/utils/time.py).
+"scripts/*" = ["S608", "DTZ", "ANN", "PLR2004", "T201", "E402", "INP001", "S106", "PLR0915", "PLR0912"]
+# The service/repository layer is typed where the annotation is load-bearing (returns,
+# dataclass fields). ``session: AsyncSession`` on every method is noise the reader already
+# knows from the surrounding file, and it is on the list to add back module by module.
+"waifu/core/*" = ["ANN001", "ANN201", "PLW0603"]
+"waifu/db/repositories/*" = ["ANN001", "ANN201"]
+"waifu/db/*" = ["ANN001", "ANN201"]
+"waifu/services/*" = ["ANN001", "ANN201", "PLR0911", "PLR0912", "PLR0915", "SIM102", "PERF102", "C400"]
+"waifu/utils/*" = ["ANN", "DTZ", "S110"]
+"waifu/tg/*" = ["ANN001", "ANN201", "PLR2004", "RUF005", "PLR0911", "ASYNC240", "UP042", "RUF012", "S110"]
+# tg/* reads local font/media files during startup (ASYNC240) and keeps enums that must
+# also serialise as strings (UP042); both are deliberate and neither is a hot path.
+"waifu/settings.py" = ["S104", "S105", "S106", "PLR0911", "PLW0603"]
+# 0.0.0.0 is what a container needs, and the token fields are config keys, not secrets.
+"waifu/ui/texts.py" = ["RUF001"]
+
+[tool.ruff.lint.isort]
+known-first-party = ["waifu"]
+
+# --------------------------------------------------------------------------- types
+[tool.mypy]
+python_version = "3.11"
+plugins = ["pydantic.mypy"]
+warn_unused_ignores = true
+disallow_untyped_defs = false
+ignore_missing_imports = true
+check_untyped_defs = true
+
+# --------------------------------------------------------------------------- tests
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+asyncio_default_fixture_loop_scope = "function"
+testpaths = ["tests"]
+filterwarnings = ["error::DeprecationWarning:waifu.*"]
+
+[tool.bandit]
+exclude_dirs = ["tests", ".venv"]
