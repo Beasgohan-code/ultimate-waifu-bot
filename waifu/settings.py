@@ -243,7 +243,7 @@ class Settings(BaseSettings):
     guess_timeout_seconds: int = 30
     guess_reward_coins: int = 20
     #: ``REACTIONS`` — the vote pool for /nguess and raffles.
-    guess_reactions: list[str] = Field(
+    guess_reactions: Annotated[list[str], NoDecode] = Field(
         default_factory=lambda: ["🔥", "🎉", "👍", "💯", "⚡", "🥳", "👀", "✨"]
     )
     #: ``SPAM_LIMIT``: messages per minute before the group autoban fires.
@@ -277,7 +277,7 @@ class Settings(BaseSettings):
 
     #: Daily streak multiplier per consecutive day (last value repeats). Env form is
     #: JSON: ``ECONOMY_STREAK_MULTIPLIER_CURVE=[1,1.1,1.2,1.3,1.4,1.5,2]``.
-    streak_multiplier_curve: list[float] = Field(
+    streak_multiplier_curve: Annotated[list[float], NoDecode] = Field(
         default_factory=lambda: [1.0, 1.1, 1.2, 1.3, 1.4, 1.5, 2.0]
     )
 
@@ -414,7 +414,13 @@ class Settings(BaseSettings):
             raise ValueError("REDIS_URL must start with redis://, rediss:// or unix://")
         return raw
 
-    @field_validator("admin_ids", "allowed_media_hosts", mode="before")
+    @field_validator(
+        "admin_ids",
+        "allowed_media_hosts",
+        "guess_reactions",
+        "streak_multiplier_curve",
+        mode="before",
+    )
     @classmethod
     def _parse_lists(cls, raw: object) -> object:
         """Env values arrive as raw strings (NoDecode) — accept both the

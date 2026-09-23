@@ -112,3 +112,43 @@ def test_deploy_smoke_redis_storage_builds_without_a_live_server() -> None:
     finally:
         os.environ.pop("ADMIN_IDS", None)
         os.environ.pop("ALLOWED_MEDIA_HOSTS", None)
+
+
+@pytest.mark.parametrize(
+    ("env_name", "value", "field", "expected"),
+    [
+        ("GUESS_REACTIONS", "🔥,⭐,💀", "guess_reactions", ["🔥", "⭐", "💀"]),
+        ("STREAK_MULTIPLIER_CURVE", "1.0, 1.1, 1.2", "streak_multiplier_curve", [1.0, 1.1, 1.2]),
+    ],
+)
+def test_other_list_env_fields_parse(
+    monkeypatch, env_name: str, value: str, field: str, expected: list
+) -> None:
+    """Same latent bug class as ALLOWED_MEDIA_HOSTS: any list-typed field whose env
+    value is comma-separated would have died the same deploy-death. All four
+    list fields are NoDecode now — pin each one."""
+    monkeypatch.setenv(env_name, value)
+    settings = Settings(
+        bot_token="123:abc",
+        owner_id=1,
+        redis_url="redis://localhost:6379/0",
+    )
+    assert getattr(settings, field) == expected
+
+
+def test_settings_error_explainer_names_the_variable(monkeypatch, capsys) -> None:
+    """The deploy log must become an answer: which var, what value, what format."""
+    from pydantic_settings import SettingsError
+
+    import waifu.__main__ as cli
+
+    monkeypatch.setenv("ALLOWED_MEDIA_HOSTS", "api.telegram.org,cdn.telegram.org")
+    cli._explain_settings_error(
+        SettingsError(
+            'error parsing value for field "allowed_media_hosts" from source "EnvSettingsSource"'
+        )
+    )
+    out = capsys.readouterr().err
+    assert "ALLOWED_MEDIA_HOSTS" in out
+    assert "api.telegram.org" in out
+    assert "comma-separated" in out

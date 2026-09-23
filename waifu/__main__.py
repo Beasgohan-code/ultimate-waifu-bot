@@ -17,6 +17,7 @@ from __future__ import annotations
 
 import argparse
 import asyncio
+import os
 import sys
 from collections.abc import Awaitable, Sequence
 
@@ -115,13 +116,63 @@ def cli() -> None:  # pragma: no cover - console-script shim
     raise SystemExit(main())
 
 
+def _env_name_for_field(field: str) -> str:
+    """The env var name behind a Settings field (aliases included)."""
+    from waifu.settings import Settings
+
+    info = Settings.model_fields.get(field)
+    if info is not None:
+        alias = info.validation_alias or info.alias
+        if isinstance(alias, str):
+            return alias.upper()
+        choices = getattr(alias, "choices", None)
+        if choices:
+            return str(choices[0]).upper()
+    return field.upper()
+
+
+def _explain_settings_error(exc: Exception) -> None:
+    """Turn pydantic-settings' 'error parsing value for field …' into an answer.
+
+    A deploy that dies on env parsing must say *which variable*, *what value it
+    had*, and *what format works* — that triple is what takes a 1 a.m. incident
+    from an hour to five minutes.
+    """
+    import re
+
+    m = re.search(r'field "(\w+)"', str(exc))
+    field = m.group(1) if m else "?"
+    env_name = _env_name_for_field(field)
+    value = os.environ.get(env_name)
+    if value is None:
+        detail = f"({env_name} is not set — the default was rejected, which means the "
+        "failure is in a computed field)"
+    elif any(word in field.lower() for word in ("token", "secret", "password")):
+        detail = f"({env_name} is set, {len(value)} chars — secret values are not printed)"
+    else:
+        detail = f"({env_name}={value!r})"
+    hint = ""
+    if field in ("admin_ids", "allowed_media_hosts", "guess_reactions", "streak_multiplier_curve"):
+        hint = "\n  list fields accept a comma-separated value (a,b,c) or a JSON array"
+    print(
+        f"error: the environment does not parse — field '{field}' failed to load {detail}\n"
+        f"  fix {env_name} in the deployment's environment variables and redeploy.{hint}",
+        file=sys.stderr,
+    )
+
+
 def _run(coroutine: Awaitable[int]) -> int:
     try:
         return asyncio.run(coroutine)
     except KeyboardInterrupt:
         return 130
     except Exception as exc:
-        print(f"error: {exc}", file=sys.stderr)
+        from pydantic_settings import SettingsError
+
+        if isinstance(exc, SettingsError):
+            _explain_settings_error(exc)
+        else:
+            print(f"error: {exc}", file=sys.stderr)
         return 1
 
 
