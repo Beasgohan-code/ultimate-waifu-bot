@@ -15,7 +15,7 @@ Two rules the code follows and this file reflects:
   where they collide with nothing, so muscle memory from the old bot keeps working.
 
 
-**144 commands across 23 plugins (31 routers registered — the extra ones render no commands: inline mode, the autoadd feed, member/reaction/poll updates).**
+**149 commands across 24 plugins (32 routers registered — the extra ones render no commands: inline mode, the autoadd feed, member/reaction/poll updates).**
 
 ## `misc.py`
 
@@ -239,9 +239,12 @@ Two rules the code follows and this file reflects:
 | command | description |
 | --- | --- |
 | `/broadcast` | /broadcast <text> → every registered group, throttled by the notifier. |
+| `/digest` | Send the weekly owner digest right now (the Sunday pass does it on its own). |
 | `/doctor` | Read-only health page: ledger integrity, queue depth, feature gates. |
 | `/givecoins` | — |
+| `/logtest` | Send a test line to the log channel and report the outcome. |
 | `/maint` | park the bot with a reason; handlers refuse while it is on. |
+| `/setlogchannel` | Point the owner's log channel at a channel the bot administers. |
 | `/setrole` | owner only (a role ladder that an admin |
 | `/sudolist` | the config layer plus the database layer. |
 | `/takecoins` | — |
@@ -267,6 +270,13 @@ Two rules the code follows and this file reflects:
 | `/hrarity` | — |
 | `/hstats` | — |
 | `/htop` | — |
+
+## `requests.py`
+
+| command | description |
+| --- | --- |
+| `/request` | ask the owner to add a character. |
+| `/requests` | the pending queue, with one-tap approve/decline for staff. |
 
 ## `webapp.py`
 

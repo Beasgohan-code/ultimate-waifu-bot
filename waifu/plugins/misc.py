@@ -692,9 +692,13 @@ async def added_to_chat(update: ChatMemberUpdated, ctx: AppContext, session: Any
     from waifu.db.repositories import spawns as spawn_repo
 
     await spawn_repo.register_group(session, chat_id=update.chat.id, title=update.chat.title or "")
+    from waifu.utils.text import esc
+
+    # The title is user text: escaped before it reaches the owner's channel
+    # (``html=True`` is what tells notify() not to escape it a second time).
+    title = esc(update.chat.title or "") or f"chat {update.chat.id}"
     await ctx.notify(
-        f"➕ added to <b>{update.chat.title or update.chat.id}</b> — /summon to start the feed",
-        silent=True,
+        f"➕ added to <b>{title}</b> — /summon to start the feed", silent=True, html=True
     )
 
 
@@ -713,6 +717,15 @@ async def new_member(update: ChatMemberUpdated, ctx: AppContext, session: Any) -
         return
     group = await ctx.moderation.group(
         session, update.chat.id, title=update.chat.title or "", create=False
+    )
+    # The group's own log channel (when set) records every join — the welcome
+    # below is ephemeral and invisible to everyone but the joiner.
+    await ctx.group_notify(
+        session,
+        update.chat.id,
+        f"➕ {member.full_name} (@{member.username}) joined · id {member.id}"
+        if member.username
+        else f"➕ {member.full_name} joined · id {member.id}",
     )
     welcome = (
         str((getattr(group, "data", None) or {}).get("welcome_text") or "")

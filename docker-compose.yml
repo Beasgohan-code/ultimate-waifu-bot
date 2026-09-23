@@ -12,6 +12,8 @@ x-bot-env: &bot-env
   WEBHOOK_SECRET: ${WEBHOOK_SECRET:-}
   API_URL: ${API_URL:-}
   API_BASE: ${API_BASE:-}
+  HEALTH_ENABLED: ${HEALTH_ENABLED:-1}
+  HEALTH_PORT: ${HEALTH_PORT:-0}
 
 services:
   db:

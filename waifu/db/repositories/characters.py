@@ -8,10 +8,19 @@ Here both live in the DB, are cached in Redis, and are edited only via /chance,
 
 from __future__ import annotations
 
+from typing import Any
+
 from sqlalchemy import case, delete, func, or_, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from waifu.db.models import Character, ClaimChance, Ownership, RarityChance, ShopPool
+from waifu.db.models import (
+    Character,
+    CharacterRequest,
+    ClaimChance,
+    Ownership,
+    RarityChance,
+    ShopPool,
+)
 from waifu.enums import Rarity
 from waifu.errors import NotFound
 from waifu.utils.rng import system_random
@@ -499,3 +508,73 @@ async def load_pool(session: AsyncSession, user_id: int, rarity: str) -> list[in
     if row is None:
         return None
     return list((row.characters or {}).get("ids", []))
+
+
+# ------------------------------------------------------------- player requests
+async def pending_requests(session: AsyncSession, *, limit: int = 30) -> list[Any]:
+    rows = (
+        (
+            await session.execute(
+                select(CharacterRequest)
+                .where(CharacterRequest.status == "pending")
+                .order_by(CharacterRequest.created_at.desc())
+                .limit(limit)
+            )
+        )
+        .scalars()
+        .all()
+    )
+    return list(rows)
+
+
+async def find_pending_request(session: AsyncSession, name: str, series: str) -> Any | None:
+    """A pending request for the same character (case-insensitive) — one ask, not ten."""
+    norm = name.strip().casefold()
+    if not norm:
+        return None
+    rows = (
+        (
+            await session.execute(
+                select(CharacterRequest).where(CharacterRequest.status == "pending")
+            )
+        )
+        .scalars()
+        .all()
+    )
+    for row in rows:
+        if (
+            row.name.strip().casefold() == norm
+            and (row.series or "").casefold() == (series or "").casefold()
+        ):
+            return row
+    return None
+
+
+async def submit_request(
+    session: AsyncSession, *, name: str, series: str, requester_id: int, note: str = ""
+) -> Any:
+    row = CharacterRequest(
+        name=name[:96],
+        series=series[:96],
+        requester_id=requester_id,
+        note=note[:200],
+    )
+    session.add(row)
+    await session.flush()
+    return row
+
+
+async def decide_request(
+    session: AsyncSession, request_id: int, *, decision: str, decided_by: int
+) -> Any:
+    """Approve / decline one request. ``decision`` must be approved|declined."""
+    from waifu.utils.time import now_utc
+
+    row = await session.get(CharacterRequest, request_id)
+    if row is None or row.status != "pending":
+        raise NotFound("that request is already decided (or gone)")
+    row.status = decision
+    row.decided_at = now_utc()
+    row.decided_by = decided_by
+    await session.flush()
+    return row

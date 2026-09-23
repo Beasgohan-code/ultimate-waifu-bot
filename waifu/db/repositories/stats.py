@@ -190,3 +190,34 @@ async def vacuum_analyze(session: AsyncSession, tables: list[str]) -> list[str]:
         await session.execute(text(f"ANALYZE {table}"))  # table names come from our own metadata
         done.append(table)
     return done
+
+
+async def week_summary(session: AsyncSession, *, since: object) -> dict[str, int]:
+    """The week in six numbers — the material for the owner's weekly digest.
+
+    Every count is one indexed range scan (each table's ``created_at`` is
+    indexed), so the digest costs about nothing on a mid-size database.
+    """
+    from waifu.db.models import FairRoll, GiftLog, RaffleRound
+
+    async def _count(stmt) -> int:
+        value = await session.execute(stmt)
+        return int(value.scalar_one() or 0)
+
+    new_players = await _count(select(func.count(User.id)).where(User.created_at >= since))
+    gifts = await _count(select(func.count(GiftLog.id)).where(GiftLog.created_at >= since))
+    # A raffle is "drawn" when the pass that closes it runs, at ~ends_at.
+    raffles = await _count(
+        select(func.count(RaffleRound.id)).where(
+            RaffleRound.status == "drawn", RaffleRound.ends_at >= since
+        )
+    )
+    pulls = await _count(select(func.count(FairRoll.id)).where(FairRoll.created_at >= since))
+    subs = await _count(select(func.count(User.id)).where(User.premium_until >= now_utc()))
+    return {
+        "new_players": new_players,
+        "gifts": gifts,
+        "raffles": raffles,
+        "pulls": pulls,
+        "subs_active": subs,
+    }

@@ -19,7 +19,7 @@ from __future__ import annotations
 
 import json
 from dataclasses import dataclass
-from datetime import timedelta
+from datetime import datetime, timedelta
 from typing import Any
 
 from aiogram import Bot
@@ -118,6 +118,14 @@ class ModerationService(Service):
             detail=f"chat={chat_id} total={total} reason={reason!r}",
             chat_id=chat_id,
             scope="chat",
+        )
+        # The group's own log channel sees moderation too, not only the owner.
+        await self.ctx.group_notify(
+            session,
+            chat_id,
+            f"⚠️ warning {total} for {user_id}"
+            + (f" → {action}" if action != "warn" else "")
+            + (f" ({reason})" if reason else ""),
         )
         return WarnResult(
             user_id=user_id,
@@ -414,6 +422,61 @@ class ModerationService(Service):
             blocked=int(stats.get("blocked", 0)),
             failed=int(stats.get("error", 0)) + int(stats.get("retry", 0)),
         )
+
+    # ------------------------------------------------------- scheduled broadcasts
+    async def schedule_broadcast(
+        self,
+        session: AsyncSession,
+        *,
+        run_at: datetime,
+        text: str,
+        actor_id: int,
+    ) -> int:
+        """Queue an announcement for a future moment (the ``/broadcast at …`` line)."""
+        from waifu.db.repositories import broadcasts as bc_repo
+
+        row = await bc_repo.schedule(session, run_at=run_at, text=text, created_by=actor_id)
+        await self.log_line(
+            f"📣 broadcast #{row.id} scheduled by {actor_id} for {run_at:%Y-%m-%d %H:%M UTC}",
+            silent=True,
+        )
+        return row.id
+
+    async def pending_broadcasts(self, session: AsyncSession) -> list[Any]:
+        from waifu.db.repositories import broadcasts as bc_repo
+
+        return await bc_repo.pending(session)
+
+    async def cancel_broadcasts(self, session: AsyncSession) -> int:
+        from waifu.db.repositories import broadcasts as bc_repo
+
+        return await bc_repo.cancel_all(session)
+
+    async def fire_due_broadcasts(self, session: AsyncSession) -> dict[str, int]:
+        """The ``broadcasts`` job pass: fan out every row whose moment has come.
+
+        Rows are claimed atomically in the repository (``sent_at`` set, one send
+        per row), so the resident loop and a cron ``waifu jobs`` cannot double-post.
+        The owner's log channel gets the counts, same as an immediate broadcast.
+        """
+        from waifu.db.repositories import broadcasts as bc_repo
+
+        due_rows = await bc_repo.due(session)
+        fired = failed = 0
+        for row in due_rows:
+            groups = await spawn_repo.spawnable_groups(session)
+            stats = await _broadcast(self.bot, [g.chat_id for g in groups], row.text)
+            sent = int(stats.get("sent", 0))
+            if sent:
+                fired += 1
+            else:
+                failed += 1
+            await self.log_line(
+                f"📣 scheduled broadcast #{row.id} (by {row.created_by}) → "
+                f"{sent} sent · {int(stats.get('blocked', 0))} blocked · "
+                f"{int(stats.get('error', 0))} failed"
+            )
+        return {"broadcasts_fired": fired, "broadcasts_failed": failed}
 
     async def audit(
         self,

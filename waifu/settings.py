@@ -15,10 +15,10 @@ from __future__ import annotations
 import json
 import os
 from pathlib import Path
-from typing import Literal, Self
+from typing import Annotated, Literal, Self
 
-from pydantic import BaseModel, Field, field_validator, model_validator
-from pydantic_settings import BaseSettings, SettingsConfigDict
+from pydantic import AliasChoices, BaseModel, Field, field_validator, model_validator
+from pydantic_settings import BaseSettings, NoDecode, SettingsConfigDict
 
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
 
@@ -90,6 +90,7 @@ class FeatureFlags(BaseModel):
     autoban: bool = True
     autospawn: bool = True
     fair_mode: bool = True  # commit/reveal verification buttons
+    dev_console: bool = False  # echo the failing handler's name on error messages
     # --- Brand new Bot API surfaces -----------------------------------------
     rich_messages: bool = True  # sendRichMessage + InputRichMessage w/ media
     draft_stream: bool = True  # sendMessageDraft (typewriter) for AI/broadcast
@@ -120,7 +121,11 @@ class Settings(BaseSettings):
     # --- Telegram -------------------------------------------------------------
     bot_token: str = ""
     owner_id: int = 0
-    admin_ids: list[int] = Field(default_factory=list)
+    # ``NoDecode`` matters: pydantic-settings JSON-decodes ``list[...]`` env values
+    # before any validator runs, so ``ADMIN_IDS=1,2,3`` (the format .env.example
+    # documents) used to crash the whole deploy with "error parsing value for
+    # field". Raw strings reach the comma-splitting validator instead.
+    admin_ids: Annotated[list[int], NoDecode] = Field(default_factory=list)
     bot_username: str = "UltimateWaifuBot"
     #: Display name in headers and /start. Not the Telegram-side name (that is set with
     #: ``setMyName`` in :func:`waifu.core.bot.apply_identity`); this is what *we* print.
@@ -140,6 +145,15 @@ class Settings(BaseSettings):
     webhook_certificate: str = ""
     webhook_max_connections: int = 40
     webhook_drop_pending_updates: bool = False
+
+    # --- Keep-alive health server (free-tier platforms: Render/Koyeb/Railway) --
+    # A tiny HTTP server (``/``, ``/health``, ``/healthz``) so a free *web* service
+    # never sleeps for idleness and uptime monitors have something to ping — the
+    # same pattern Videl ships. ``health_port=0`` means "use the platform's $PORT
+    # (or 8080)"; the field also reads PORT via its alias, so it just works there.
+    health_enabled: bool = True
+    health_port: int = Field(default=0, validation_alias=AliasChoices("HEALTH_PORT", "PORT"))
+    health_host: str = "0.0.0.0"
     #: Drop updates queued while the bot was offline (polling). ``False`` is the
     #: default because replaying an hour of /daily presses is worse than missing them.
     drop_pending_updates: bool = False
@@ -234,6 +248,12 @@ class Settings(BaseSettings):
     )
     #: ``SPAM_LIMIT``: messages per minute before the group autoban fires.
     spam_limit_per_minute: int = 20
+    #: Per-user / per-chat command token buckets (``ThrottleMiddleware``). Summon-bot had no
+    #: throttling of its own and rode Telegram's global 30 req/s, which is one busy server
+    #: away from a 429 storm. These numbers sit comfortably under that ceiling.
+    rate_limit_per_user: int = 30
+    rate_limit_per_chat: int = 60
+    rate_limit_window: int = 60
     #: Auto-ban groups whose owner enabled it, after N strikes in the window.
     spam_auto_ban_strikes: int = 3
     #: ``commands_auction.py`` clamped a listing to 5-180 minutes with a 30-minute default and
@@ -286,7 +306,7 @@ class Settings(BaseSettings):
     card_width: int = 900
     media_base_url: str = ""
     font_path: str = ""
-    allowed_media_hosts: list[str] = Field(
+    allowed_media_hosts: Annotated[list[str], NoDecode] = Field(
         default_factory=lambda: ["api.telegram.org", "files.catbox.moe", "i.ibb.co", "catbox.moe"]
     )
     enable_outbound_media: bool = True
@@ -397,10 +417,22 @@ class Settings(BaseSettings):
     @field_validator("admin_ids", "allowed_media_hosts", mode="before")
     @classmethod
     def _parse_lists(cls, raw: object) -> object:
-        if raw in (None, ""):
+        """Env values arrive as raw strings (NoDecode) — accept both the
+        comma-separated form documented in .env.example and a JSON array, so
+        either habit keeps working."""
+        if raw is None:
             return []
         if isinstance(raw, str):
-            return [p for part in (raw.split(","),) for p in [x.strip() for x in part] if p]
+            text = raw.strip()
+            if not text:
+                return []
+            try:
+                parsed = json.loads(text)
+                if isinstance(parsed, list):
+                    return parsed
+            except (json.JSONDecodeError, ValueError):
+                pass  # not JSON — the documented comma-separated form
+            return [part.strip() for part in text.split(",") if part.strip()]
         return raw
 
     @field_validator("admin_ids", mode="after")
@@ -483,6 +515,14 @@ class Settings(BaseSettings):
 
     def is_admin(self, user_id: int) -> bool:
         return user_id in self.owner_ids
+
+    def is_owner(self, user_id: int) -> bool:
+        """Strict owner check (``is_admin`` is true for admins *and* the owner).
+
+        ``core.access.resolve`` needs the two apart: the owner row gets every
+        permission, admins get everything except the owner-only set.
+        """
+        return user_id != 0 and user_id == self.owner_id
 
     def key(self, *parts: str | int) -> str:
         """Namespaced Redis key: ``uwb:spawn:queue`` etc."""

@@ -35,7 +35,7 @@ from waifu.errors import NotFound, PaywallRequired
 from waifu.services.base import Service
 from waifu.settings import CoinPack as SettingsCoinPack
 from waifu.tg import paid
-from waifu.utils.text import fmt_num, truncate
+from waifu.utils.text import esc, fmt_num, truncate
 from waifu.utils.time import now_utc
 
 #: A boost reward stays claimable for a day after the boost itself expires.
@@ -219,6 +219,35 @@ class PremiumService(Service):
             target=payload,
             detail=f"charge={charge_id} granted={granted}",
         )
+        # The owner's log channel is the money trail: every delivered payment,
+        # with what was paid and what was granted, in one line.
+        granted_bits = [
+            bit
+            for bit in (
+                f"{int(granted.get('coins') or 0):,} 🪙" if granted.get("coins") else "",
+                f"{int(granted.get('premium_hours') or 0) // 24}d premium"
+                if granted.get("premium_hours")
+                else "",
+                f"#{granted['character_id']}" if granted.get("character_id") else "",
+            )
+            if bit
+        ]
+        from waifu.tg.rich import rich_log
+
+        deliverables = " + ".join(granted_bits) or "no deliverables"
+        if charge_id:
+            deliverables += f"\ncharge {charge_id}"
+        await self.log_line(
+            f"💰 payment: {user_id} paid {int(order.star_count)} ⭐ for "
+            f"{order.product_ref or order.product} → "
+            + deliverables.replace("\n", " · ")
+            + (f" (charge {charge_id})" if charge_id else ""),
+            rich=rich_log(
+                "💰 Stars payment",
+                f"{user_id} paid {int(order.star_count)} ⭐ for {order.product_ref or order.product}",
+                detail=deliverables,
+            ),
+        )
         return {"ok": True, "user_id": user_id, "granted": granted, "stars": int(order.star_count)}
 
     async def refund(
@@ -266,53 +295,108 @@ class PremiumService(Service):
             target=str(user_id),
             detail=f"charge={charge_id} clawed={clawed} reason={truncate(reason, 120)}",
         )
+        await self.log_line(
+            f"↩️ refund: {user_id} · {charge_id} · clawed back {clawed:,} 🪙 ({truncate(reason, 60)})",
+            silent=True,
+        )
         return {"ok": True, "clawed_back": clawed, "user_id": user_id}
 
     # ------------------------------------------------------------ subscriptions
     async def sync_subscription(self, session: AsyncSession, subscription: Any) -> dict[str, Any]:
-        """Consume a ``BotSubscriptionUpdated`` payload (aiogram 3.30 ``@router.subscription()``)."""
-        user_id = int(getattr(getattr(subscription, "subscriber", None), "id", 0) or 0)
+        """Consume a ``subscription`` update (Bot API 10.1, aiogram 3.31).
+
+        The update carries exactly three fields — ``user``, ``invoice_payload``
+        and ``state`` (``active`` | ``canceled`` | ``failed``). There is no price
+        and no renewal flag: the price is whatever the link we created charged,
+        and **renewals are silent**, which is why :meth:`renew_due_subscriptions`
+        runs nightly instead of trusting an update that never comes.
+
+        (The previous version read ``subscriber`` / ``is_canceled`` /
+        ``is_renewal`` — fields that do not exist on the 10.1 object — so every
+        subscription update was a silent no-op and cancellations leaked premium.)
+        """
+        user = getattr(subscription, "user", None)
+        user_id = int(getattr(user, "id", 0) or 0)
         if not user_id:
-            return {"ok": False, "reason": "no subscriber"}
-        charge_id = str(getattr(subscription, "telegram_payment_charge_id", "") or f"sub-{user_id}")
-        amount = int(
-            getattr(subscription, "subscription_price", self.settings.premium_sub_stars)
-            or self.settings.premium_sub_stars
+            return {"ok": False, "reason": "no user on subscription update"}
+        # A subscriber update does not materialise the player row the way a chat
+        # does (the middleware reads ``from_user``, which this update lacks) —
+        # and the premium/subscription tables have a FK to ``users``. Without
+        # this, a first-time subscriber's payment update dies on the FK.
+        await user_repo.upsert(
+            session,
+            user_id,
+            first_name=str(getattr(user, "first_name", "") or ""),
+            username=getattr(user, "username", None),
+            settings=self.settings,
         )
-        if bool(getattr(subscription, "is_canceled", False)):
-            await monetize_repo.close_subscription(session, user_id)
+        payload = str(getattr(subscription, "invoice_payload", "") or "")
+        state = str(getattr(subscription, "state", "") or "").lower()
+
+        if state == "canceled":
+            closed = await monetize_repo.close_subscription(session, user_id)
             await mod_repo.audit(
                 session,
                 actor_id=user_id,
                 action="subscription.cancel",
-                target=charge_id,
-                detail="telegram",
+                target=payload or f"sub-{user_id}",
+                detail="telegram update",
             )
-            await self.log_line(f"💔 subscription cancelled by {user_id}", silent=True)
-            return {"ok": True, "state": "cancelled", "user_id": user_id}
-        if bool(getattr(subscription, "is_renewal", False)):
-            await monetize_repo.extend_subscription(
-                session, user_id, days=self.settings.premium_sub_days
-            )
-            await ledger.grant_premium(
+            if closed:
+                from waifu.tg.rich import rich_log
+
+                await self.log_line(
+                    f"💔 subscription cancelled by {user_id}",
+                    silent=True,
+                    rich=rich_log("💔 subscription cancelled", f"by {user_id}"),
+                )
+            return {"ok": True, "state": "cancelled", "user_id": user_id, "closed": closed}
+
+        if state == "failed":
+            # Telegram's dunning: it keeps trying the card, the perks stay as
+            # they are — but the owner must see it, or "why is he still premium
+            # after canceling?" becomes a support ticket.
+            await mod_repo.audit(
                 session,
-                user_id,
-                hours=self.settings.premium_sub_days * 24,
-                granted_by=0,
-                source="stars",
+                actor_id=user_id,
+                action="subscription.failed",
+                target=payload or f"sub-{user_id}",
+                detail="telegram update",
             )
+            from waifu.tg.rich import rich_log
+
             await self.log_line(
-                f"🔁 {user_id} renewed — premium extended {self.settings.premium_sub_days}d"
+                f"❌ subscription payment failed for {user_id} — Telegram will keep retrying",
+                silent=True,
+                rich=rich_log(
+                    "❌ subscription payment failed",
+                    f"for {user_id}",
+                    detail="Telegram will keep retrying the charge",
+                ),
             )
-            return {"ok": True, "state": "renewed", "user_id": user_id}
+            return {"ok": True, "state": "failed", "user_id": user_id}
+
+        # "active" — a fresh subscription or a re-enabled one. An *already
+        # active* subscription means a duplicated at-least-once update: the
+        # period and the perks stay exactly as they are (closing + re-granting
+        # here would flicker the user's premium to zero for a moment).
+        if await monetize_repo.has_subscription(session, user_id):
+            await mod_repo.audit(
+                session,
+                actor_id=user_id,
+                action="subscription.active",
+                target=payload or f"sub-{user_id}",
+                detail="duplicate or no-op",
+            )
+            return {"ok": True, "state": "active", "user_id": user_id, "already_active": True}
         await monetize_repo.upsert_subscription(
             session,
             user_id=user_id,
-            subscription_id=charge_id,
+            subscription_id=payload or f"sub-{user_id}",
             chat_id=None,
             tier="supporter",
             status="active",
-            amount=amount,
+            amount=self.settings.premium_sub_stars,
             currency="XTR",
             current_period_end=now_utc() + timedelta(days=self.settings.premium_sub_days),
         )
@@ -323,10 +407,58 @@ class PremiumService(Service):
             granted_by=0,
             source="stars",
         )
+        await mod_repo.audit(
+            session,
+            actor_id=user_id,
+            action="subscription.active",
+            target=payload or f"sub-{user_id}",
+            detail="telegram update",
+        )
+        from waifu.tg.rich import rich_log
+
         await self.log_line(
-            f"🎉 {user_id} subscribed · {amount} ⭐/month — premium for {self.settings.premium_sub_days} days"
+            f"🎉 {user_id} started a premium subscription · "
+            f"{self.settings.premium_sub_stars} ⭐ every {self.settings.premium_sub_days}d",
+            rich=rich_log(
+                "🎉 premium subscription started",
+                f"{user_id} · {self.settings.premium_sub_stars} ⭐ every "
+                f"{self.settings.premium_sub_days}d",
+            ),
         )
         return {"ok": True, "state": "active", "user_id": user_id}
+
+    async def renew_due_subscriptions(self, session: AsyncSession) -> int:
+        """Extend premium on subscriptions whose period lapsed.
+
+        Telegram renews silently (no ``subscription`` update on renewal), so
+        without this pass a subscriber's premium would quietly expire while the
+        Stars keep leaving their account — the exact moment users open disputes.
+        The nightly job calls it; each renewal is a payment the owner gets told
+        about, same as a fresh one.
+        """
+        days = self.settings.premium_sub_days
+        renewed = 0
+        for user_id, amount in await monetize_repo.due_renewals(session):
+            await monetize_repo.extend_subscription(session, user_id, days=days)
+            await ledger.grant_premium(
+                session,
+                user_id,
+                hours=days * 24,
+                granted_by=0,
+                source="subscription",
+            )
+            renewed += 1
+            from waifu.tg.rich import rich_log
+
+            await self.log_line(
+                f"🔁 {user_id} renewed premium — {amount} ⭐ · {days}d (silent renewal)",
+                rich=rich_log(
+                    "🔁 premium renewed",
+                    f"{user_id} · {amount} ⭐ · {days}d",
+                    detail="silent renewal (Telegram renews without an update)",
+                ),
+            )
+        return renewed
 
     async def cancel_subscription(
         self, session: AsyncSession, user_id: int, *, reason: str = "user request"
@@ -391,6 +523,12 @@ class PremiumService(Service):
             action="premium.grant",
             target=str(user_id),
             detail=f"{hours}h ({source}) → {left}h left",
+        )
+        await self.log_line(
+            f"{'⭐ premium +' if hours > 0 else '↩️ premium −'}{abs(hours)}h → {user_id}"
+            + (f" by {granted_by}" if granted_by else "")
+            + f" ({source}) · {left}h left",
+            silent=True,
         )
         return left
 
@@ -505,15 +643,38 @@ class PremiumService(Service):
         )
         await monetize_repo.mark_delivered(session, payload)
         if order.character_id and user_id:
+            from waifu.db.repositories import characters as char_repo
             from waifu.db.repositories import collection as collection_repo
+            from waifu.enums import Rarity
 
             await collection_repo.grant(session, user_id, int(order.character_id), source="stars")
+            character = await char_repo.get(session, int(order.character_id))
+            if character is not None:
+                # The buyer's proof of purchase — the paywall post can be deleted
+                # and the character is theirs either way, but the receipt is what
+                # makes "I paid, where is it?" a non-question.
+                await self.deliver_character_dm(
+                    user_id,
+                    character,
+                    (
+                        "🔓 <b>Unlocked!</b> You paid "
+                        f"{int(order.star_count)} ⭐ and this is yours now.\n\n"
+                        f"<b>{esc(character.name)}</b>"
+                        + (f" — {esc(character.anime)}" if character.anime else "")
+                        + f"\n{Rarity.from_value(int(character.rarity_id)).badge}"
+                        + "\n\nRe-send it any time from your collection."
+                    ),
+                )
         await mod_repo.audit(
             session,
             actor_id=user_id,
             action="media.unlock",
             target=str(order.character_id or 0),
             detail=f"payload={payload}",
+        )
+        await self.log_line(
+            f"💳 paid media: {user_id or order.user_id} unlocked #{order.character_id} "
+            f"for {int(order.star_count)} ⭐"
         )
         return {
             "ok": True,
@@ -697,8 +858,18 @@ class PremiumService(Service):
             if winners:
                 # one reaction on the announcement, not one per winner: the emoji is the
                 # "it happened" marker for the whole chat, and N calls would be N flood-wait
-                # risks in the busiest chats.
+                # risks in the busiest chats. The group also gets the result as a message —
+                # a reaction says "something happened", the card says who won.
                 await self._react_ids(row.chat_id, int(row.message_id or 0), row.emoji or "🎉")
+                await self._raffle_results_post(session, row, pool, winners)
+            if row.reward and winners:
+                # Coins leaving the house are a payment event: the owner sees who won.
+                await self.log_line(
+                    f"🎟️ raffle #{row.id} in {row.chat_id}: {len(pool)} entrants → "
+                    + ", ".join(str(w) for w in winners)
+                    + f" · {int(row.reward):,} 🪙 each",
+                    silent=True,
+                )
             if self.redis is not None:
                 await self.redis.delete(RAFFLE_ENTRY_KEY.format(raffle_id=row.id))
             out.append(
@@ -725,6 +896,51 @@ class PremiumService(Service):
             )
         except TelegramAPIError:  # pragma: no cover - bot may lack the right in some chats
             pass
+
+    async def _raffle_results_post(
+        self, session: Any, row: Any, pool: list[int], winners: list[int]
+    ) -> None:
+        """The draw's result as a card in the group (rich when the server has it).
+
+        The reaction marks the moment; this names the winners. Kept in the
+        service (not the handler) because the draw runs from the scheduler, and
+        a blocked group (bot kicked) degrades to a logged skip, not a crash.
+        Groups with their own log channel get the line there as well.
+        """
+        if self.bot is None:
+            return
+        from waifu.tg.notify import safe_send
+        from waifu.tg.rich import RichMessageBuilder, rich_log
+
+        reward = int(row.reward or 0)
+        names = ", ".join(str(w) for w in winners)
+        body = (
+            f"🎟️ <b>Raffle #{row.id} results</b>\n"
+            f"{len(pool)} entrants · {len(winners)} winner(s)\n"
+            f"winners: <code>{names}</code>"
+            + (f"\nreward: <b>{reward:,} 🪙 each</b>" if reward else "")
+        )
+        rich = None
+        if self.ctx.caps.rich_messages:
+            builder = RichMessageBuilder().heading(f"🎟️ raffle #{row.id} results")
+            for winner in winners:
+                builder.line(f"🏆 {winner}" + (f" — {reward:,} 🪙" if reward else ""))
+            builder.footer(f"{len(pool)} entrants · drawn now")
+            rich = builder.build()
+        await safe_send(self.bot, row.chat_id, body, rich=rich, disable_notification=False)
+        # The group's own log channel, when the admins set one up.
+        await self.ctx.group_notify(
+            session,
+            row.chat_id,
+            f"🎟️ raffle #{row.id} drawn: {len(pool)} entrants → "
+            + ", ".join(str(w) for w in winners)
+            + (f" · {reward:,} 🪙 each" if reward else ""),
+            rich=rich_log(
+                f"🎟️ raffle #{row.id} drawn",
+                f"{len(pool)} entrants → " + ", ".join(str(w) for w in winners),
+                detail=f"{reward:,} 🪙 each" if reward else "no coin reward",
+            ),
+        )
 
     async def raffle_history(
         self, session: AsyncSession, chat_id: int, *, limit: int = 10

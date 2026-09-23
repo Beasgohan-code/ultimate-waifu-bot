@@ -129,6 +129,89 @@ async def _inventory_expiry(conn: AsyncConnection) -> None:
     )
 
 
+async def _create_table_portable(conn: AsyncConnection, sqlite_ddl: str, pg_ddl: str) -> None:
+    """CREATE TABLE for both dialects in one step.
+
+    Greenfield installs already built the table from the ORM metadata in
+    ``0001`` (IF NOT EXISTS makes this a no-op); existing installs need the
+    DDL, and SERIAL/BIGSERIAL vs INTEGER PRIMARY KEY is the only difference.
+    """
+    ddl = sqlite_ddl if conn.dialect.name.startswith("sqlite") else pg_ddl
+    await conn.execute(text(ddl))
+
+
+async def _scheduled_broadcasts(conn: AsyncConnection) -> None:
+    """``/broadcast at 20:00 …`` — announcements fired by the jobs loop."""
+    await _create_table_portable(
+        conn,
+        (
+            "CREATE TABLE IF NOT EXISTS scheduled_broadcasts ("
+            " id INTEGER PRIMARY KEY,"
+            " run_at TIMESTAMP NOT NULL,"
+            " text TEXT NOT NULL,"
+            " created_by BIGINT NOT NULL DEFAULT 0,"
+            " created_at TIMESTAMP,"
+            " sent_at TIMESTAMP"
+            ")"
+        ),
+        (
+            "CREATE TABLE IF NOT EXISTS scheduled_broadcasts ("
+            " id BIGSERIAL PRIMARY KEY,"
+            " run_at TIMESTAMP NOT NULL,"
+            " text TEXT NOT NULL,"
+            " created_by BIGINT NOT NULL DEFAULT 0,"
+            " created_at TIMESTAMP,"
+            " sent_at TIMESTAMP"
+            ")"
+        ),
+    )
+    await conn.execute(
+        text("CREATE INDEX IF NOT EXISTS ix_broadcasts_run ON scheduled_broadcasts (run_at)")
+    )
+
+
+async def _character_requests(conn: AsyncConnection) -> None:
+    """``/request <Name> <Series>`` — the polite door to the admin-curated roster."""
+    await _create_table_portable(
+        conn,
+        (
+            "CREATE TABLE IF NOT EXISTS character_requests ("
+            " id INTEGER PRIMARY KEY,"
+            " name VARCHAR(96) NOT NULL,"
+            " series VARCHAR(96) NOT NULL DEFAULT '',"
+            " requester_id BIGINT NOT NULL,"
+            " status VARCHAR(12) NOT NULL DEFAULT 'pending',"
+            " note VARCHAR(200) NOT NULL DEFAULT '',"
+            " created_at TIMESTAMP,"
+            " decided_at TIMESTAMP,"
+            " decided_by BIGINT"
+            ")"
+        ),
+        (
+            "CREATE TABLE IF NOT EXISTS character_requests ("
+            " id BIGSERIAL PRIMARY KEY,"
+            " name VARCHAR(96) NOT NULL,"
+            " series VARCHAR(96) NOT NULL DEFAULT '',"
+            " requester_id BIGINT NOT NULL,"
+            " status VARCHAR(12) NOT NULL DEFAULT 'pending',"
+            " note VARCHAR(200) NOT NULL DEFAULT '',"
+            " created_at TIMESTAMP,"
+            " decided_at TIMESTAMP,"
+            " decided_by BIGINT"
+            ")"
+        ),
+    )
+    await conn.execute(
+        text(
+            "CREATE INDEX IF NOT EXISTS ix_requests_status "
+            "ON character_requests (status, created_at)"
+        )
+    )
+    await conn.execute(
+        text("CREATE INDEX IF NOT EXISTS ix_requests_name ON character_requests (name, series)")
+    )
+
+
 MIGRATIONS: tuple[Migration, ...] = (
     Migration(
         "2026_09_01_0001_core_schema", "create every table from the ORM metadata", _core_schema
@@ -156,6 +239,16 @@ MIGRATIONS: tuple[Migration, ...] = (
         "2026_09_13_0006_inventory_expiry",
         "user_inventory.expires_at (shop item TTL)",
         _inventory_expiry,
+    ),
+    Migration(
+        "2026_09_23_0007_scheduled_broadcasts",
+        "scheduled_broadcasts (``/broadcast at …``)",
+        _scheduled_broadcasts,
+    ),
+    Migration(
+        "2026_09_23_0008_character_requests",
+        "character_requests (``/request <Name> <Series>``)",
+        _character_requests,
     ),
 )
 

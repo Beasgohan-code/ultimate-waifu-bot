@@ -57,6 +57,11 @@ and local poking only — the same code path, no second implementation). The tim
 (spawn feed, auction settlement, expiries, raffle draws) runs in-process; to drive it from
 cron instead, set `NO_JOBS=1` and run `python -m waifu jobs --name autospawn`.
 
+List-valued env vars (`ADMIN_IDS`, `ALLOWED_MEDIA_HOSTS`) accept the comma-separated form
+shown in `.env.example` *and* a JSON array — `ADMIN_IDS=1,2,3`. Both parse on every
+platform (Render, Railway, a bare box) because the fields are declared `NoDecode`; a
+test pins the env-var path so the deploy never dies on settings parsing again.
+
 ## Layout
 
 ```
@@ -103,7 +108,92 @@ prepared inline messages for sharing a harem, and inline mode for the roster and
 collection (`@bot <query>`, `@bot collection.<you>`). `python -m waifu` negotiates them once at
 startup (`waifu/tg/caps.py`) and each renderer picks the plain path when the server does
 not have them — so an instance on a self-hosted API server of last year loses formatting,
-not functionality. Details: [docs/NEW_BOT_API.md](docs/NEW_BOT_API.md).
+not functionality. Reactions are the quietest of them: the bot puts a heart on a
+newcomer's first message, on a delivered gift, and a fire on a daily streak claim —
+readable in a 4k scrollback without adding a fifth bot message, and gone (gracefully)
+on servers without the feature. Details: [docs/NEW_BOT_API.md](docs/NEW_BOT_API.md).
+
+## Owner log channel
+
+Set `LOG_CHANNEL_ID` (a channel id, `-100…` format — forward any channel post to
+[@userinfobot](https://t.me/userinfobot) to read it) and add the bot as an **admin** of that
+channel. Everything the owner should know about lands there, in-chat, one line per event:
+
+- **lifecycle** — 🟢 started (version, Bot API level, capability summary), 🔴 stopped,
+  💥 crashed (with the exception), before each restart the supervisor asks for;
+- **players** — 🆕 first seen (name, handle, premium/owner badge), ➕ joined a group;
+- **gifts** — 🎁 character gift (giver → receiver, character, rarity) — anonymous gifts
+  included, and 🪙 coin gifts; the *receiver* also gets a private DM with the character's
+  name, rarity and art (or a text card when there is none to send);
+- **money** — 💰 Stars settlements (amount, coins credited), ↩️ refunds, 💳 paid-media
+  purchases, 🎉/🔁/🔁 subscription starts, renewals and cancellations;
+- **the rest** — 🎟️ raffle results, 🔁 trades, auction settlements, boosts, maintenance
+  mode, and ledger-integrity alarms.
+
+The bot never blocks on the channel: every send is fire-and-forget with a bounded
+in-process queue, a `try/except` around the whole thing, and a silent drop-and-count once
+the channel is unreachable — a misconfigured `LOG_CHANNEL_ID` costs you a channel post,
+never a player action.
+
+The channel also verifies itself: `/logtest` sends a test line and reports the outcome
+(the "bot is not an admin" case is the common one), and the `/doctor` page counts every
+send since startup — a dead channel shows up there instead of failing silently for weeks.
+
+Three owner commands keep the feed in hand without a deploy:
+
+- `/setlogchannel -100…` (owner) repoints the feed — the bot must already be an admin
+  of the target channel — and stores the choice in the database, where it wins over
+  `LOG_CHANNEL_ID` across restarts;
+- `/digest` sends the weekly digest on demand; the Sunday job pass sends it on its own.
+  Seven numbers (new players, pulls, gifts, raffles drawn, ⭐ Stars in, orders,
+  premium now) as a rich table;
+- every line is a **rich message** (Bot API 9.5+ `SendRichMessage`) on servers that
+  have the feature — heading + body + a code block for the machine detail — with the
+  identical plain line as the fallback on older servers. The same rich layout is used
+  for the gift-receipt DM and the in-group raffle results card.
+
+**Per-group log channels.** Every group can point its *own* channel at the feed:
+set `log_channel_id` in that group's settings (`/groupsettings`). Group-scoped
+events — member joins, warnings/ladder actions, raffle draws — are posted there **in
+addition to** the global owner channel, so a group's admins watch their own feed while
+the owner keeps the master copy. Unconfigured group → the line simply goes to the
+owner channel as before.
+
+## Scheduled broadcasts, character requests, streak warnings
+
+- **`/broadcast at 20:00 <text>`** schedules an announcement (also `20:00 tomorrow`,
+  `+2h`, `in 30m`, `2026-12-31 20:00`); the jobs loop fires it at the moment, fans it
+  out to every registered group, and logs the result to the owner channel.
+  `/broadcast list` shows the queue, `/broadcast cancel` empties it. Rows are claimed
+  with an atomic `UPDATE … WHERE sent_at IS NULL`, so the resident loop and a cron
+  `waifu jobs` can never double-post.
+- **`/request <Name> <Series>`** — the polite door to the admin-curated roster.
+  Requests that match an existing character (fuzzy) are answered with a `/check`
+  pointer, duplicates collapse to the first ask, and staff see the deduped queue in
+  `/requests` with one-tap ✅/❌. Approving flags it for the owner (who still uploads
+  the art) and the asker is told the outcome by DM.
+- **Streak-break warning** — once a day the jobs loop DMs every player whose streak of
+  ≥3 days would break at the nightly reset ("your 5-day streak breaks tonight —
+  /daily"), including what freezes they have. A per-cycle marker makes it a single DM,
+  not an hourly one, and failed sends retry on the next pass.
+
+## Keep-alive health server
+
+Free-tier platforms (Render's free tier included) sleep a *web* service that exposes no
+public endpoint. `HEALTH_ENABLED` (default `1`) makes polling mode run a tiny aiohttp
+server — the same pattern Videl ships (`videl/core/server.py`) — alongside the bot:
+
+- `GET /` and `GET /health` — `{status, bot, version, api_version, uptime_seconds}`,
+  always 200 while the process is up, no database access (a wedged DB must not 503 the
+  keep-alive, or the platform sleeps the bot and the DB problem becomes "bot is offline");
+- `GET /healthz` — the deep check (database + redis, 503 when the data layer is down);
+- port order `HEALTH_PORT` → the platform's `$PORT` → 8080; `HEALTH_HOST` to override the
+  bind address. Webhook mode already serves `/healthz` through the main app, so the second
+  server only runs in polling mode. A taken port degrades to a warning, never to a crash.
+
+It is aiohttp rather than Werkzeug because the process already owns the asyncio loop —
+Videl's own implementation is aiohttp too, and a WSGI worker would cost a thread and an
+event-loop hop per poke.
 
 ## Advanced: what the porting turned into
 
@@ -155,8 +245,13 @@ list as a file, and Telegram's ⊞ menu is published at startup from the same re
 ## Tests
 
 ```bash
-make test    # 268 tests: pulls and pity, economy invariants, escrow, paging, ingestion,
-             # inline mode, the API's initData signature check, the reference-port map
+make test    # 468 tests: pulls and pity, economy invariants, escrow, paging, ingestion,
+             # inline mode, the API's initData signature check, the reference-port map,
+             # owner-log coverage (gifts, Stars, subscriptions, the health server, a
+             # full /start through the real middleware stack, /logtest, /setlogchannel,
+             # the weekly digest, reactions, rich-message fallback, per-group log
+             # channels, scheduled broadcasts, character requests, streak warnings,
+             # and env-var list parsing — the format a real deploy hands over)
 make lint    # ruff + ruff format + "generated docs are current"
 make check   # both, which is what CI runs
 ```

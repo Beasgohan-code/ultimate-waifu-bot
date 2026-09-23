@@ -539,6 +539,25 @@ async def active_subscription_charge(session: AsyncSession, user_id: int) -> str
     return str(row.subscription_id) if row else ""
 
 
+async def due_renewals(session: AsyncSession) -> list[tuple[int, int]]:
+    """``(user_id, amount)`` for active subscriptions whose period has lapsed.
+
+    Telegram renews silently — no ``subscription`` update arrives — so the nightly
+    job compares ``current_period_end`` against the clock instead of trusting an
+    event that never comes. Amount is the per-period price we stored, for the log.
+    """
+    rows = (
+        await session.execute(
+            select(SubscriptionAccess.user_id, SubscriptionAccess.amount).where(
+                SubscriptionAccess.status == str(SubscriptionState.ACTIVE),
+                SubscriptionAccess.current_period_end.is_not(None),
+                SubscriptionAccess.current_period_end <= now_utc(),
+            )
+        )
+    ).all()
+    return [(int(r[0]), int(r[1] or 0)) for r in rows]
+
+
 async def close_subscription(
     session: AsyncSession, user_id: int, *, status: str = "cancelled"
 ) -> int:

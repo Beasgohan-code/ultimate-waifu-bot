@@ -990,6 +990,48 @@ class KvState(Base):
     )
 
 
+class ScheduledBroadcast(Base):
+    """A queued announcement: ``/broadcast at 20:00 …`` fires from the jobs loop."""
+
+    __tablename__ = "scheduled_broadcasts"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    run_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    text: Mapped[str] = mapped_column(Text, nullable=False)
+    created_by: Mapped[int] = mapped_column(BigInteger, default=0, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now)
+    sent_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+
+    __table_args__ = (Index("ix_broadcasts_run", "run_at"),)
+
+
+class CharacterRequest(Base):
+    """Player-submitted character requests (``/request <Name> <Series>``).
+
+    The roster is admin-curated on purpose; this is the polite door — players
+    ask, the owner approves (and uploads), duplicates are visible in one place
+    instead of fifty DMs.
+    """
+
+    __tablename__ = "character_requests"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    name: Mapped[str] = mapped_column(String(96), nullable=False)
+    series: Mapped[str] = mapped_column(String(96), default="", nullable=False)
+    requester_id: Mapped[int] = mapped_column(BigInteger, nullable=False)
+    status: Mapped[str] = mapped_column(String(12), default="pending", nullable=False)
+    # pending | approved | declined
+    note: Mapped[str] = mapped_column(String(200), default="", nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now)
+    decided_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    decided_by: Mapped[int | None] = mapped_column(BigInteger)
+
+    __table_args__ = (
+        Index("ix_requests_status", "status", "created_at"),
+        Index("ix_requests_name", "name", "series"),
+    )
+
+
 MODEL_NAMES = (
     "users",
     "characters",
@@ -1032,4 +1074,6 @@ MODEL_NAMES = (
     "stats_snapshots",
     "schema_version",
     "kv_state",
+    "scheduled_broadcasts",
+    "character_requests",
 )

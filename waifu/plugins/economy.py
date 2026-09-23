@@ -144,6 +144,12 @@ async def do_daily(
             + bonus
         ),
     )
+    # The streak is the number to celebrate: a fire on the claim itself reads
+    # better than any extra message (and a callback claim has nothing to react to).
+    if ctx.caps.allow("reactions") and isinstance(event, Message):
+        from waifu.tg.interactions import react
+
+        await react(ctx.bot, event, "fire")
 
 
 @router.callback_query(F.data == "eco:daily")

@@ -413,3 +413,39 @@ class StatsService(Service):
         from waifu.db.repositories import trades as trade_repo
 
         return await trade_repo.purge_expired(session)
+
+    # ---------------------------------------------------------------- digests
+    async def week_summary(self, session: AsyncSession, *, days: int = 7) -> dict[str, int]:
+        """The week in seven numbers — the owner digest's raw material.
+
+        Combines the cheap indexed counts (players, gifts, raffles, pulls,
+        active subscriptions) with the Stars revenue total, so the digest is
+        one method and one ``notify`` call for both the weekly job and
+        ``/digest``.
+        """
+        from datetime import timedelta
+
+        from waifu.db.repositories import monetize as monetize_repo
+        from waifu.utils.time import now_utc
+
+        since = now_utc() - timedelta(days=days)
+        summary = await stats_repo.week_summary(session, since=since)
+        revenue = await monetize_repo.revenue(session, since=since)
+        summary["stars"] = int(revenue.get("stars", 0))
+        summary["orders"] = int(revenue.get("orders", 0))
+        summary["days"] = days
+        return summary
+
+    @staticmethod
+    def digest_rows(summary: dict[str, int]) -> list[list[object]]:
+        """``week_summary`` → table rows for the digest card (plain data only,
+        so the tg layer owns the rendering)."""
+        return [
+            ["new players", summary.get("new_players", 0)],
+            ["pulls", summary.get("pulls", 0)],
+            ["character gifts", summary.get("gifts", 0)],
+            ["raffles drawn", summary.get("raffles", 0)],
+            ["⭐ Stars in", summary.get("stars", 0)],
+            ["Stars orders", summary.get("orders", 0)],
+            ["premium now", summary.get("subs_active", 0)],
+        ]

@@ -17,9 +17,10 @@ from typing import TYPE_CHECKING, Any
 
 from aiogram import F, Router
 from aiogram.filters import Command, CommandObject
-from aiogram.types import CallbackQuery, Message, PreCheckoutQuery
+from aiogram.types import CallbackQuery, Message, PreCheckoutQuery, Update
 
 from waifu.errors import NotFound, WaifuError
+from waifu.logging import get_logger
 from waifu.plugins._kit import (
     Args,
     RichMessageBuilder,
@@ -38,6 +39,7 @@ if TYPE_CHECKING:  # pragma: no cover
     from waifu.core.context import AppContext
 
 router = Router(name="premium")
+log = get_logger("plugins.premium")
 
 
 @router.message(Command("premium", "vip", "stars"))
@@ -59,8 +61,10 @@ async def send_menu(
         )
     )
     rows = [["perk", "what it gives you"]]
-    for key, value in (info.perks or {}).items():
-        rows.append([str(key), str(value)])
+    # ``perks`` is a list of sentences — the old code called ``.items()`` on it
+    # and /premium raised AttributeError on the first user who opened it.
+    for perk in info.perks or []:
+        rows.append(["⭐", str(perk)])
     rows += [
         ["double /hclaim", "two free claims a day"],
         ["+claim odds", f"+{ctx.settings.premium_claim_boost_percent}% weight toward high tiers"],
@@ -170,6 +174,32 @@ async def delivered(message: Message, ctx: AppContext, session: Any) -> None:
     result = await ctx.premium.settle(session, payload, charge_id=charge, star_count=stars)
     lines = [f"🎉 {key}: {value}" for key, value in result.items() if value not in (None, "", 0)]
     await text(message, ctx, "\n".join(lines) or "payment received — thanks!")
+
+
+@router.purchased_paid_media()
+async def on_purchased_paid_media(update: Update, ctx: AppContext, session: Any) -> None:
+    """A paid-media purchase (Bot API 7.2) — the *only* proof of payment.
+
+    Without this handler the money leaves the buyer's account and the
+    ``purchased_paid_media`` update dies unhandled: no grant, no receipt, and
+    the order row stuck in ``pending`` until an admin notices it in
+    ``/revenue``. Settlement is idempotent on the payload, so a Telegram retry
+    cannot deliver twice.
+    """
+    result = await ctx.premium.settle_purchase(session, update)
+    if not result.get("ok"):
+        log.warning("paid media purchase not settled: %s", result.get("reason"))
+
+
+@router.subscription()
+async def on_subscription(update: Update, ctx: AppContext, session: Any) -> None:
+    """A Stars subscription changed (Bot API 10.1) — mirror it.
+
+    Telegram owns the billing cycle; this is where a cancel at Telegram's side
+    stops the perks, a failed charge is reported to the owner, and a (silent)
+    renewal keeps premium honest. See :meth:`PremiumService.sync_subscription`.
+    """
+    await ctx.premium.sync_subscription(session, update.subscription)
 
 
 @router.message(Command("raffle"))

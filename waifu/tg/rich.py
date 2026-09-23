@@ -346,6 +346,54 @@ class RichMessageBuilder:
         )
 
 
+def rich_log(title: str, body: str, *, detail: str = "") -> InputRichMessage:
+    """One owner-log event as a native rich message (Bot API 9.5+).
+
+    ``title`` (the emoji + event name) is the section heading, ``body`` the line
+    itself, and an optional ``detail`` a code block for machine detail (ids,
+    amounts, versions). Callers still pass the plain string as the fallback, so
+    a server without the feature renders the identical line.
+    """
+    builder = RichMessageBuilder().heading(title).paragraph(body)
+    if detail:
+        builder.code(detail)
+    return builder.build()
+
+
+def gift_receipt_rich(
+    *,
+    name: str,
+    series: str = "",
+    rarity: str = "",
+    note: str = "",
+    from_name: str = "",
+    media: str = "",
+) -> InputRichMessage:
+    """The private gift receipt, rendered natively (heading + art + rarity + note).
+
+    Takes plain strings only — the service layer must not build aiogram types.
+    ``media`` is a file_id or URL (a photo block); without it the receipt is a
+    text card, exactly like the HTML fallback.
+    """
+    builder = RichMessageBuilder().heading(f"🎁 {name}")
+    if media:
+        builder.photo(media, caption=f"{series} · {rarity}".strip(" ·") or None)
+    if note:
+        builder.quote(truncate(note, 120))
+    builder.footer(f"From: {from_name}" if from_name else "From: an anonymous admirer 🎭")
+    return builder.build()
+
+
+def rich_digest(title: str, rows: list[list[object]], *, footer: str = "") -> InputRichMessage:
+    """The weekly owner digest: heading + a metrics table + a timestamp footer."""
+    builder = (
+        RichMessageBuilder().heading(title).table([["metric", "last 7 days"], *rows], compact=True)
+    )
+    if footer:
+        builder.footer(footer)
+    return builder.build()
+
+
 # --------------------------------------------------------------------- helpers
 def _format_plain(text: RichNode, wrapper: type | None) -> list[RichNode]:
     """Wrap a string in an optional style node; ``None`` means "leave literal"."""

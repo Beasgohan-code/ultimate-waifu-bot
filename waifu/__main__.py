@@ -159,6 +159,10 @@ async def _doctor(*, json_output: bool = False) -> int:
         "skipped": [f"{path}: {reason}" for path, reason in app.report.skipped],
         "pending_migrations": pending,
         "redis": bool(app.redis),
+        # The owner's event feed: a deploy without it runs "fine" but records
+        # nothing — worth a line here, because /logtest only exists once the bot
+        # is up.
+        "log_channel": app.ctx.settings.log_channel_id,
         "tables": [{"name": name, "bytes": size} for name, size in await app.ctx.db.table_sizes()][
             :40
         ],
@@ -171,6 +175,10 @@ async def _doctor(*, json_output: bool = False) -> int:
         for line in report["skipped"]:
             print(f"  skipped  {line}")
         print(f"redis   : {'connected' if report['redis'] else 'not configured'}")
+        log_channel = report["log_channel"]
+        print(
+            f"logchan : {'channel ' + str(log_channel) + ' — run /logtest once the bot is up' if log_channel else 'not configured (set LOG_CHANNEL_ID)'}"
+        )
         for key, value in report["health"].items():
             print(f"{key:<8}: {value}")
         if report["health"].get("characters") == 0:

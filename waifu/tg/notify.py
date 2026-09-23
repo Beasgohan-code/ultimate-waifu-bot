@@ -22,8 +22,14 @@ from typing import Any
 
 from aiogram import Bot
 from aiogram.enums import ChatAction
-from aiogram.exceptions import TelegramAPIError, TelegramForbiddenError, TelegramRetryAfter
-from aiogram.types import ErrorEvent, Message
+from aiogram.exceptions import (
+    TelegramAPIError,
+    TelegramBadRequest,
+    TelegramForbiddenError,
+    TelegramRetryAfter,
+)
+from aiogram.methods import SendRichMessage
+from aiogram.types import ErrorEvent, InputFile, InputRichMessage, Message
 
 from waifu.logging import get_logger
 
@@ -131,7 +137,8 @@ async def safe_send(
     chat_id: int,
     text: str,
     *,
-    photo: str | None = None,
+    photo: str | InputFile | None = None,
+    rich: InputRichMessage | None = None,
     reply_markup: Any = None,
     parse_mode: str | None = "HTML",
     thread_id: int | None = None,
@@ -139,12 +146,36 @@ async def safe_send(
     protect_content: bool = False,
     retries: int = 1,
 ) -> SendResult:
-    """Send with blocked/flood handling. Never raises for expected failures."""
+    """Send with blocked/flood handling. Never raises for expected failures.
+
+    ``rich`` (Bot API 9.5+ ``SendRichMessage``) takes priority over the plain
+    send; a server without the feature (or a context that rejects the layout)
+    transparently falls back to the ``text``/``photo`` path, so every caller
+    gets the same line either way.
+    """
     attempt = 0
     while True:
         attempt += 1
         try:
-            if photo:
+            if rich is not None:
+                try:
+                    message = await bot(
+                        SendRichMessage(
+                            chat_id=chat_id,
+                            rich_message=rich,
+                            disable_notification=disable_notification or None,
+                            protect_content=protect_content or None,
+                            message_thread_id=thread_id,
+                        )
+                    )
+                    return SendResult(SendOutcome.SENT, message=message)
+                except (TelegramBadRequest, AttributeError) as exc:
+                    # "method not found" on old servers, or a layout the API
+                    # refuses — the plain path below carries the same content.
+                    log.info("rich send rejected for chat %s (%s); using plain send", chat_id, exc)
+                    rich = None
+                    continue  # re-run the branch choice on the plain path
+            elif photo:
                 message = await bot.send_photo(
                     chat_id,
                     photo=photo,
