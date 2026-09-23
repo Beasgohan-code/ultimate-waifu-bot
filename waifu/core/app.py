@@ -39,8 +39,8 @@ from waifu.core.bot import (
 )
 from waifu.core.context import AppContext
 from waifu.core.dp import RegistrationReport, build_dispatcher, build_storage
+from waifu.db import Database
 from waifu.db.cache import Cache
-from waifu.db.engine import Database
 from waifu.db.redis_client import Redis
 from waifu.logging import get_logger, setup_logging
 from waifu.services import build as build_services
@@ -96,8 +96,15 @@ async def build_app(
     token: str | None = None,
     with_bot: bool = True,
     negotiate: bool = True,
+    with_plugins: bool = True,
 ) -> BuiltApp:
-    """Construct the full application. Never starts it."""
+    """Construct the full application. Never starts it.
+
+    ``with_plugins=False`` keeps a bare dispatcher (no routers attached) and
+    reports the plugin status through :func:`waifu.core.dp.plugin_report` —
+    for the CLI diagnostics (doctor/jobs/api) that never serve an update and
+    must not leave the module-level routers attached for a later dispatcher.
+    """
     cfg = settings or get_settings()
     db = Database.from_settings(cfg)
     redis: Redis | None = None
@@ -127,7 +134,15 @@ async def build_app(
         caps=Caps.negotiate(cfg, api_flags),
     )
     ctx = build_services(ctx)
-    dp, report = build_dispatcher(cfg, ctx)
+    if with_plugins:
+        dp, report = build_dispatcher(cfg, ctx)
+    else:
+        from waifu.core.dp import plugin_report
+
+        # Bare dispatcher: the diagnostics never serve an update, and attaching
+        # the real routers here would make any later build_dispatcher fail.
+        dp = Dispatcher(storage=build_storage(cfg), ctx=ctx, settings=cfg)
+        report = plugin_report()
     if bot is not None:
         # aiogram injects workflow_data into every handler; ``ctx`` is how handlers
         # reach services without importing a singleton.

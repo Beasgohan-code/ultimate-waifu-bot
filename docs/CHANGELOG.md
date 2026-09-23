@@ -1,0 +1,58 @@
+# Changelog
+
+## 2026-09-23 — one database, automatic backups, fastest startup
+
+- **One database.** `DATABASE_URL` now defaults to a single SQLite file
+  (`data/waifu.db`): no server to install, nothing to connect to, one file is all
+  there is to back up. Postgres (`postgresql+asyncpg://…`) remains the scale-up
+  path for multi-worker deployments — same code, same migrations (portable to
+  both), same backups.
+- **Redis is optional.** Leave `REDIS_URL` empty and the bot runs on in-process
+  state (MemoryStorage FSM, database-backed cooldowns and queues). The database
+  stays the only source of truth, so losing the process loses speed, never data.
+- **Backups.** `waifu backup`, `waifu restore <file> [--yes]` (preview without
+  `--yes`) and the owner command `/backup`. The jobs loop takes a snapshot of the
+  whole database daily and keeps `BACKUP_KEEP` (default 10) of them, reporting
+  each one to the owner channel. Restore is all-or-nothing: a bad file leaves
+  the database exactly as it was.
+- `waifu doctor` now prints the newest backup and its age.
+- `deploy.env.example` — the easy deploy env: copy to `.env`, set `BOT_TOKEN`,
+  done. The full commented reference stays in `.env.example`.
+- `waifu/db/engine.py` became `waifu/db/database.py` — the one database module:
+  `tx()` (read/write) and `query()` (read-only) are the two access methods
+  everything else builds on, plus `backup()`/`restore()`.
+
+## 2026-09-23 — deploy fixes (Render)
+
+- `NoDecode` on every list-typed settings field: `ADMIN_IDS=1,2,3` (the form
+  `.env.example` documents) and JSON arrays both parse; a garbage value is a
+  clean validation error, not an opaque env-decode crash.
+- FSM storage: `DefaultKeyBuilder(prefix="waifu:fsm")` — aiogram 3.31 has no
+  `global_prefix` keyword, which crashed every real deploy at startup.
+- When the environment fails to parse, the CLI prints which variable failed,
+  what value it had (secrets masked) and the format to use.
+
+## 2026-09-23 — owner feed, rich messages, weekly digest
+
+- `/setlogchannel` (owner, admin-verified, stored in the database so it wins
+  over the env across restarts); per-group log channels for joins/warnings/
+  raffle draws; `/digest` on demand + the Sunday job pass; rich messages
+  (`SendRichMessage`) for every owner-facing send, the gift-receipt DM and the
+  in-group raffle results card — plain-text fallback everywhere.
+
+## 2026-09-23 — log self-reporting, reactions
+
+- `/logtest` proves the channel is alive; `/doctor` counts every log-channel
+  send since startup (a dead channel shows up, instead of failing silently);
+  reactions on a newcomer's first message, a delivered gift and a daily claim.
+
+## 2026-09 — owner log channel + Bot API 10.3 surfaces
+
+- `LOG_CHANNEL_ID` event feed: start/stop/crash, gifts (character + rarity),
+  every payment (Stars, paid media, subscriptions), joins, moderation; the
+  gift recipient gets a private DM with the character, rarity and art.
+- Videl-pattern keep-alive health server (`/`, `/health`, `/healthz`).
+- New Bot API surfaces with graceful degradation: rich messages, drafts,
+  ephemeral messages, checklists, live photos, member tags, disabled buttons,
+  button styles, media polls, guest mode, business connections, topics,
+  paid media/Stars.

@@ -50,6 +50,7 @@ INTERVALS: dict[str, int] = {
     "broadcasts": 60,  # /broadcast at … — a minute granularity is plenty for announcements
     "streaks": 3600,  # at-risk streak warnings (once per player per day)
     "digest": 604800,  # weekly — the pass itself re-checks the clock (Sunday)
+    "backup": 86400,  # daily snapshot of the whole database (BACKUP_KEEP kept)
 }
 
 
@@ -289,6 +290,33 @@ async def _digest(ctx: AppContext, *, limit: int) -> dict[str, int]:
     return {"digest_sent": sent}
 
 
+async def _backup(ctx: AppContext, *, limit: int) -> dict[str, int]:
+    """One snapshot of the entire database per day (retention ``BACKUP_KEEP``).
+
+    Doubly deduplicated: the interval is 24 h *and* the pass stamps a kv entry,
+    because ``waifu jobs --name all`` driven from cron may fire more often than
+    a day — "no data loss" must never turn into "disk full".
+    """
+    from waifu.db import prune_backups
+    from waifu.db.repositories.stats import kv_get, kv_set
+
+    async with ctx.db.tx() as session:
+        last = await kv_get(session, "last_backup") or {}
+    if time.time() - float(last.get("at", 0)) < 20 * 3600:
+        return {}
+    path, counts = await ctx.db.backup(ctx.settings.backup_dir)
+    pruned = prune_backups(ctx.settings.backup_dir, keep=int(ctx.settings.backup_keep))
+    total = sum(counts.values())
+    await ctx.notify(
+        f"💾 database backup: {path.name} — {total:,} rows across {len(counts)} tables"
+        + (f" ({pruned} older removed)" if pruned else ""),
+        silent=True,
+    )
+    async with ctx.db.tx() as session:
+        await kv_set(session, "last_backup", {"at": time.time(), "file": path.name})
+    return {"rows": total, "pruned": pruned}
+
+
 PASSES: dict[str, Callable[..., Awaitable[dict[str, int]]]] = {
     "autospawn": _autospawn,
     "spawns": _spawns,
@@ -301,6 +329,7 @@ PASSES: dict[str, Callable[..., Awaitable[dict[str, int]]]] = {
     "broadcasts": _broadcasts,
     "streaks": _streaks,
     "digest": _digest,
+    "backup": _backup,
 }
 
 

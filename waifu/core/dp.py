@@ -114,6 +114,23 @@ def build_dispatcher(settings: Settings, ctx: AppContext) -> tuple[Dispatcher, R
     return dp, report
 
 
+def plugin_report() -> RegistrationReport:
+    """Import-check every plugin **without attaching anything to a dispatcher**.
+
+    ``register_plugins`` attaches the module-level routers permanently (aiogram
+    refuses to attach a router twice), so a diagnostic that only wants the
+    report — ``waifu doctor`` — must not go through it: in a process that
+    later builds a real dispatcher (the test suite shares one), the attached
+    routers would make that build raise.
+    """
+    report = RegistrationReport()
+    for path in PLUGIN_ROUTERS:
+        router = _load(path, report)
+        if router is not None:
+            report.loaded.append(path)
+    return report
+
+
 def register_plugins(
     dp: Dispatcher, ctx: AppContext, report: RegistrationReport | None = None
 ) -> RegistrationReport:

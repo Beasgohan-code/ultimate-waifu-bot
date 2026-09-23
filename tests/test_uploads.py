@@ -27,7 +27,7 @@ from aiogram.types import Chat, Message, PhotoSize, User
 
 from tests.conftest import test_settings as make_settings
 from waifu.core.access import Access
-from waifu.db.engine import Database
+from waifu.db import Database
 from waifu.db.migrations import _personas
 from waifu.db.models import Character, RarityChance
 from waifu.db.repositories import characters as char_repo

@@ -15,7 +15,7 @@ Two rules the code follows and this file reflects:
   where they collide with nothing, so muscle memory from the old bot keeps working.
 
 
-**149 commands across 24 plugins (32 routers registered — the extra ones render no commands: inline mode, the autoadd feed, member/reaction/poll updates).**
+**150 commands across 24 plugins (32 routers registered — the extra ones render no commands: inline mode, the autoadd feed, member/reaction/poll updates).**
 
 ## `misc.py`
 
@@ -238,6 +238,7 @@ Two rules the code follows and this file reflects:
 
 | command | description |
 | --- | --- |
+| `/backup` | Snapshot the whole database to BACKUP_DIR and say where it went. |
 | `/broadcast` | /broadcast <text> → every registered group, throttled by the notifier. |
 | `/digest` | Send the weekly owner digest right now (the Sunday pass does it on its own). |
 | `/doctor` | Read-only health page: ledger integrity, queue depth, feature gates. |

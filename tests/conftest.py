@@ -28,8 +28,8 @@ import pytest_asyncio
 from sqlalchemy import func, select
 
 from waifu.core.context import AppContext
+from waifu.db import Database
 from waifu.db.cache import Cache
-from waifu.db.engine import Database
 from waifu.db.models import Character
 from waifu.db.repositories import users as user_repo
 from waifu.db.seed import seed_all

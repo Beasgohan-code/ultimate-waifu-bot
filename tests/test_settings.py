@@ -136,6 +136,41 @@ def test_other_list_env_fields_parse(
     assert getattr(settings, field) == expected
 
 
+def test_one_db_defaults_need_no_infra(monkeypatch) -> None:
+    """BOT_TOKEN is the only variable the bot cannot start without: the database
+    defaults to ONE file and Redis is optional, so a zero-infrastructure deploy
+    is valid settings (the old code demanded Postgres *and* Redis just to boot)."""
+    monkeypatch.delenv("DATABASE_URL", raising=False)
+    monkeypatch.delenv("REDIS_URL", raising=False)
+    settings = Settings(_env_file=None, bot_token="123:abc", owner_id=1)
+    assert settings.database_url.startswith("sqlite+aiosqlite:///")
+    assert settings.redis_url == ""
+    problems = settings.validate_runtime()
+    assert not any("DATABASE_URL" in problem for problem in problems)
+    assert not any("REDIS_URL" in problem for problem in problems)
+
+
+@pytest.mark.parametrize(
+    "bad",
+    ["postgresql://u:p@h/db", "sqlite:///sync-only.db", "mysql://x@y/z", "postgres://h/db"],
+)
+def test_database_url_rejects_other_backends(bad: str) -> None:
+    from pydantic import ValidationError
+
+    with pytest.raises(ValidationError):
+        _settings(database_url=bad)
+
+
+def test_redis_url_is_optional_but_scheme_checked(monkeypatch) -> None:
+    from pydantic import ValidationError
+
+    monkeypatch.delenv("DATABASE_URL", raising=False)
+    monkeypatch.delenv("REDIS_URL", raising=False)
+    assert Settings(_env_file=None, bot_token="123:abc", owner_id=1, redis_url="").redis_url == ""
+    with pytest.raises(ValidationError):
+        Settings(_env_file=None, bot_token="123:abc", owner_id=1, redis_url="postgres://nope")
+
+
 def test_settings_error_explainer_names_the_variable(monkeypatch, capsys) -> None:
     """The deploy log must become an answer: which var, what value, what format."""
     from pydantic_settings import SettingsError

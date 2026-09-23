@@ -37,8 +37,25 @@ it automatic), and `python -m waifu import-legacy ./summon.db` migrates a live S
 
 ## Run it
 
+**Fastest start — one file, no services:**
+
 ```bash
-cp .env.example .env          # BOT_TOKEN, DATABASE_URL (Postgres), REDIS_URL
+cp deploy.env.example .env    # set BOT_TOKEN — the only required variable
+make install
+python -m waifu migrate       # schema + tier ladders (writes the one database file)
+make run
+```
+
+That is the whole setup: the default database is **one file** (`data/waifu.db`, SQLite),
+Redis is optional, and `BOT_TOKEN` is the only variable without a safe default. Before you
+deploy, point `DATABASE_URL` at a *persistent* volume — on Render the project dir is wiped
+on every deploy, so use `sqlite+aiosqlite:////opt/render/project/data/waifu.db` (a backup
+taken into the ephemeral dir dies with the box).
+
+**Scale mode — several workers (Docker, Postgres + Redis):**
+
+```bash
+cp .env.example .env          # the full reference: every variable, commented
 docker compose up --build     # bot + postgres + redis
 ```
 
@@ -52,10 +69,34 @@ python -m waifu import-legacy ./summon.db --dry-run   # optional: your old data
 make run
 ```
 
-Postgres and Redis are required at runtime (`WAIFU_TEST_MODE=1` unlocks SQLite for tests
-and local poking only — the same code path, no second implementation). The timer loop
-(spawn feed, auction settlement, expiries, raffle draws) runs in-process; to drive it from
-cron instead, set `NO_JOBS=1` and run `python -m waifu jobs --name autospawn`.
+The same code runs on the one file or on Postgres (migrations are portable to both; the
+tests exercise the SQLite path). The timer loop (spawn feed, auction settlement, expiries,
+raffle draws, the daily backup) runs in-process; to drive it from cron instead, set
+`NO_JOBS=1` and run `python -m waifu jobs --name autospawn`.
+
+## The database: one file, two methods, automatic backup
+
+Everything the bot remembers — players, coins, collections, characters, auctions, streaks,
+log state — lives in exactly **one database**. By default that is a single file;
+`postgresql+asyncpg://…` is the scale-up path for multi-worker deployments, with the same
+migrations, the same code and the same backups.
+
+Two methods cover all access (every service and command in the codebase builds on them):
+
+- `Database.tx()` — **read/write**: one transaction, commit on success, roll back on error;
+- `Database.query(stmt)` — **read-only**: one statement, no commit.
+
+And the guarantee that keeps "data loss" out of the vocabulary:
+
+- `waifu backup` / `waifu restore <file> [--yes]` — the entire database in one JSON file
+  (every table, in foreign-key order); restore is all-or-nothing, so a bad file leaves
+  the database exactly as it was;
+- the jobs loop takes the same snapshot **daily**, keeps `BACKUP_KEEP` (default 10) and
+  reports each one to the owner channel;
+- `/backup` (owner) — the snapshot from Telegram, answering "where is my data?" with a
+  filename you can restore later;
+- `waifu doctor` prints the newest backup and its age, so "did it actually back up?" has
+  a visible answer.
 
 List-valued env vars (`ADMIN_IDS`, `ALLOWED_MEDIA_HOSTS`) accept the comma-separated form
 shown in `.env.example` *and* a JSON array — `ADMIN_IDS=1,2,3`. Both parse on every
@@ -68,8 +109,9 @@ test pins the env-var path so the deploy never dies on settings parsing again.
 waifu/
   core/        app assembly, dispatcher + plugin loading, middlewares, access/permissions,
                context (the service registry), jobs (the timer loop), CLI (waifu/__main__.py)
-  db/          engine, models, versioned migrations, seed (tier ladders + catalogue),
-               repositories/ (all SQL lives here), cache, redis client
+  db/          one database: database.py (the engine + tx/query + backup/restore),
+               models, versioned migrations, seed (tier ladders + catalogue),
+               repositories/ (all SQL lives here), cache, optional redis client
   services/    economy, gacha, collection, items, spawn, auction, trading, codes, gifts,
                progress, stats, moderation, premium, ai, cards, hstats — no Telegram types
   tg/          one module per new Bot API surface: rich messages, drafts, ephemerals,
@@ -245,13 +287,15 @@ list as a file, and Telegram's ⊞ menu is published at startup from the same re
 ## Tests
 
 ```bash
-make test    # 468 tests: pulls and pity, economy invariants, escrow, paging, ingestion,
+make test    # 491 tests: pulls and pity, economy invariants, escrow, paging, ingestion,
              # inline mode, the API's initData signature check, the reference-port map,
              # owner-log coverage (gifts, Stars, subscriptions, the health server, a
              # full /start through the real middleware stack, /logtest, /setlogchannel,
              # the weekly digest, reactions, rich-message fallback, per-group log
-             # channels, scheduled broadcasts, character requests, streak warnings,
-             # and env-var list parsing — the format a real deploy hands over)
+             # channels, scheduled broadcasts, character requests, streak warnings),
+             # backup/restore (full-DB round trip, all-or-nothing failure, retention,
+             # the daily pass, the CLI, /backup), and env-var list parsing — the format
+             # a real deploy hands over
 make lint    # ruff + ruff format + "generated docs are current"
 make check   # both, which is what CI runs
 ```

@@ -424,6 +424,38 @@ async def logtest(message: Message, ctx: AppContext, access: Access) -> None:
         )
 
 
+@router.message(Command("backup", "dumpdb"))
+async def backup_db(message: Message, ctx: AppContext, access: Access) -> None:
+    """Snapshot the whole database to BACKUP_DIR and say where it went.
+
+    The one button that answers "what if the database dies?": a single JSON
+    file holding every table, restorable with ``waifu restore <file>``. The
+    jobs loop makes the same snapshot daily and keeps ``BACKUP_KEEP`` of them.
+    """
+    if access.role is not Role.OWNER:
+        await refuse(message, "only the bot owner takes database backups.")
+        return
+    from waifu.db import prune_backups
+
+    try:
+        path, counts = await ctx.db.backup(ctx.settings.backup_dir)
+    except Exception as exc:  # pragma: no cover - disk failure
+        await refuse(message, f"the backup failed: {exc}")
+        return
+    prune_backups(ctx.settings.backup_dir, keep=int(ctx.settings.backup_keep))
+    total = sum(counts.values())
+    await text(
+        message,
+        ctx,
+        f"💾 backup written: <code>{path.name}</code> — {total:,} rows across "
+        f"{len(counts)} tables.\nRestore it any time with: "
+        f"<code>waifu restore {path.name}</code>",
+    )
+    await ctx.notify(
+        f"💾 backup taken by {access.user_id}: {path.name} ({total:,} rows)", silent=True
+    )
+
+
 @router.message(Command("maint", "maintenance"))
 async def maint(message: Message, ctx: AppContext, command: CommandObject, access: Access) -> None:
     """``/maint on 30`` — park the bot with a reason; handlers refuse while it is on."""

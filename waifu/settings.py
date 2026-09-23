@@ -1,13 +1,19 @@
 """Typed configuration — the only place environment variables are read.
 
-Two deliberate, opinionated constraints (per the "full PSQL + Redis" brief):
+Deliberate, opinionated constraints:
 
-* ``DATABASE_URL`` **must** be ``postgresql+asyncpg://…`` — no SQLite runtime path.
-* ``REDIS_URL`` **must** be set and reachable — FSM, cooldowns, queues, rate
-  limits and leaderboards live there.
+* **One database.** ``DATABASE_URL`` defaults to a single SQLite file
+  (``data/waifu.db``): nothing to install, the fastest possible startup, and
+  one file is all there is to back up. ``postgresql+asyncpg://…`` remains
+  supported for multi-worker scale-up — same code, migrations and backups.
+* **Redis is optional.** With ``REDIS_URL`` empty the bot runs on in-process
+  state (MemoryStorage FSM, DB-backed cooldowns/queues): correct for a single
+  worker, and the database stays the only source of truth — losing the
+  process loses speed, never data.
 
-Both are validated at startup with an actionable message, and the only escape
-hatch is ``WAIFU_TEST_MODE=1`` (used by the unit-test harness, never by a bot).
+Everything is validated at startup with an actionable message; ``BOT_TOKEN``
+is the only variable without a safe default, and ``WAIFU_TEST_MODE=1`` relaxes
+nothing at runtime (it only marks the unit-test harness).
 """
 
 from __future__ import annotations
@@ -170,15 +176,20 @@ class Settings(BaseSettings):
     api_url: str = ""
     api_base: str = ""
 
-    # --- Postgres (required) --------------------------------------------------
-    database_url: str = ""
+    # --- Database (one — a file by default, Postgres when scaling) -----------
+    #: A single SQLite file: the fastest startup (no server to connect to) and
+    #: the only thing ``waifu backup`` has to copy. Point it at a *persistent*
+    #: volume on platforms with an ephemeral project dir (Render:
+    #: ``sqlite+aiosqlite:////opt/render/project/data/waifu.db``) — a database
+    #: file inside the checkout is wiped on every deploy.
+    database_url: str = "sqlite+aiosqlite:///data/waifu.db"
     db_echo: bool = False
     db_pool_size: int = 10
     db_max_overflow: int = 20
     db_statement_timeout_ms: int = 8000
     legacy_db_path: str = ""
 
-    # --- Redis (required) -----------------------------------------------------
+    # --- Redis (optional — hot state only, never the source of truth) ---------
     redis_url: str = ""
     redis_max_connections: int = 64
     redis_key_prefix: str = "uwb"
@@ -328,6 +339,12 @@ class Settings(BaseSettings):
     log_level: str = "INFO"
     log_json: bool = False
     data_dir: Path = Path("./data")
+    #: Where ``waifu backup``, the daily jobs pass and ``/backup`` write their
+    #: JSON snapshots of the whole database.
+    backup_dir: Path = Path("./backups")
+    #: How many backups to keep (the oldest beyond this are pruned after each
+    #: backup) — enough history to "go back 10 days" without filling a disk.
+    backup_keep: int = 10
     support_chat_id: int = 0
     #: Private chat where generated art is uploaded so it becomes a permanent
     #: file_id (``/archiveart`` uses this; leave 0 to disable archiving).
@@ -391,25 +408,37 @@ class Settings(BaseSettings):
     @field_validator("database_url")
     @classmethod
     def _validate_db(cls, raw: str) -> str:
+        """One database, two backends.
+
+        SQLite (the default) is a first-class runtime database — a single
+        file holding the whole source of truth. Postgres is the scale-up
+        path for multi-worker deployments. Anything else is a typo.
+        """
         raw = (raw or "").strip()
-        if raw.startswith("sqlite") and not in_test_mode():
+        if raw.startswith(("sqlite+aiosqlite://", "postgresql+asyncpg://")):
+            return raw
+        if raw.startswith("sqlite"):
             raise ValueError(
-                "SQLite is not a supported runtime database. Set DATABASE_URL to "
-                "postgresql+asyncpg://user:pass@host:5432/waifu (see docker-compose.yml)."
+                "DATABASE_URL must use the async driver: sqlite+aiosqlite:///… "
+                "(plain sqlite:// has no async support) or postgresql+asyncpg://…"
             )
-        if raw and not raw.startswith(("postgresql+asyncpg://", "sqlite+aiosqlite://")):
-            raise ValueError("DATABASE_URL must use the postgresql+asyncpg:// scheme.")
+        if raw:
+            raise ValueError(
+                "DATABASE_URL must be sqlite+aiosqlite:///… (the default one-file "
+                "database) or postgresql+asyncpg://user:pass@host:5432/waifu."
+            )
         return raw
 
     @field_validator("redis_url")
     @classmethod
     def _validate_redis(cls, raw: str) -> str:
+        """Optional: empty = in-process state (single worker).
+
+        Nothing lives *only* in Redis — cooldowns, queues and FSM states have
+        database-backed or in-process fallbacks — so an empty value is a
+        valid deployment, not a broken one.
+        """
         raw = (raw or "").strip()
-        if not raw and not in_test_mode():
-            raise ValueError(
-                "REDIS_URL is required (FSM storage, cooldowns, spawn queue, rate limits). "
-                "Example: redis://localhost:6379/0"
-            )
         if raw and not raw.startswith(("redis://", "rediss://", "unix://")):
             raise ValueError("REDIS_URL must start with redis://, rediss:// or unix://")
         return raw
@@ -453,11 +482,12 @@ class Settings(BaseSettings):
                 raise ValueError("MODE=webhook requires WEBHOOK_SECRET (blocks forged updates).")
             if not self.webhook_url.startswith("https://"):
                 raise ValueError("WEBHOOK_URL must be an https:// URL.")
-        if self.sqlite_path is not None and not in_test_mode():  # defensive
-            raise ValueError("SQLite runtime is not supported.")
         self.data_dir = Path(self.data_dir)
         if not self.data_dir.is_absolute():
             self.data_dir = PROJECT_ROOT / self.data_dir
+        self.backup_dir = Path(self.backup_dir)
+        if not self.backup_dir.is_absolute():
+            self.backup_dir = PROJECT_ROOT / self.backup_dir
         return self
 
     # --------------------------------------------------------------- accessors
@@ -535,18 +565,20 @@ class Settings(BaseSettings):
         return ":".join((self.redis_key_prefix, *(str(p) for p in parts)))
 
     def validate_runtime(self) -> list[str]:
-        """Startup checklist; each entry is a human-readable problem. Empty = good."""
+        """Startup checklist; each entry is a human-readable problem. Empty = good.
+
+        Only the token can actually block a deploy: the database defaults to
+        one file and Redis is optional, so a fresh checkout starts with a
+        single variable and degrades gracefully instead of dying on setup.
+        """
         problems: list[str] = []
         if not self.bot_token or self.bot_token == "PUT_YOUR_BOT_TOKEN_HERE":
             problems.append("BOT_TOKEN is missing — create one with @BotFather.")
         if self.owner_id <= 0:
-            problems.append("OWNER_ID must be your numeric Telegram id (use @userinfobot).")
-        if not self.database_url:
-            problems.append("DATABASE_URL is missing (postgresql+asyncpg://…).")
-        elif not self.is_postgres:
-            problems.append("DATABASE_URL must be postgresql+asyncpg://…; SQLite is test-only.")
-        if not self.redis_url:
-            problems.append("REDIS_URL is missing (redis://localhost:6379/0).")
+            problems.append(
+                "OWNER_ID is not set — owner commands (/backup, /doctor, /setlogchannel, …) "
+                "stay locked (use @userinfobot for your numeric id)."
+            )
         if self.mode == "webhook" and not self.webhook_secret:
             problems.append("WEBHOOK_SECRET is required in webhook mode.")
         if not self.coin_packs and self.features.stars:

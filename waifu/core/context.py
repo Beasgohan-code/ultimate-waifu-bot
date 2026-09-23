@@ -28,7 +28,7 @@ log = get_logger("core.context")
 if TYPE_CHECKING:  # pragma: no cover
     from aiogram import Bot
 
-    from waifu.db.engine import Database
+    from waifu.db import Database
     from waifu.db.redis_client import Redis
     from waifu.services.ai import AiService
     from waifu.services.auction import AuctionService

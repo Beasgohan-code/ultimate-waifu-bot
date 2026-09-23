@@ -88,7 +88,7 @@
       "status": "superseded",
       "where": [
         "waifu/db/migrations/runner.py",
-        "waifu/db/engine.py",
+        "waifu/db/database.py",
         "waifu/settings.py"
       ],
       "note": "Postgres bootstrap + schema guard. Here that is ``python -m waifu migrate`` (a small versioned runner, ``waifu/db/migrations/runner.py``) on whatever ``DATABASE_URL`` says, and the settings validator refuses a SQLite URL outside development — which is the same 'are you sure this is the right database' guard the script implemented, moved to where a typo cannot get past startup."
@@ -170,7 +170,7 @@
       "status": "adapted",
       "where": [
         "waifu/db/repositories",
-        "waifu/db/engine.py",
+        "waifu/db/database.py",
         "waifu/db/migrations"
       ],
       "note": "48 hand-rolled SQL helpers -> typed async repositories over the same tables, with ``INSERT OR REPLACE`` replaced by update-in-place so an upload cannot wipe a description, and the schema owned by migrations."
@@ -274,7 +274,7 @@
     "storage": {
       "status": "adapted",
       "where": [
-        "waifu/db/engine.py",
+        "waifu/db/database.py",
         "waifu/db/repositories",
         "waifu/settings.py"
       ],
