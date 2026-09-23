@@ -26,7 +26,7 @@ from waifu.settings import Settings
 if TYPE_CHECKING:  # pragma: no cover
     from aiogram import Bot
 
-    from waifu.db.redis_client import Redis
+    from waifu.db.state import Redis
 
 #: Telegram's anonymous-admin channel; needed for ``/unban`` of channel admins.
 ANONYMOUS_ADMIN_ID = 1087968824

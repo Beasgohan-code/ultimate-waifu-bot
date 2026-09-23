@@ -1,32 +1,197 @@
-"""Redis: hot state, queues, leaderboards, cooldowns, locks, pub/sub.
+"""Hot state — the fast layer that is **never the source of truth**.
 
-What lives here (and why):
+Two objects, one rule: everything in this module is a cache or a coordination
+helper with TTLs. Money and collections live in the database
+(:mod:`waifu.db.database`), so losing this layer degrades speed, never
+correctness, and a backup of the database restores everything that matters.
 
-===================  ==========================================================
-FSM / sessions       ``aiogram.fsm.storage.redis.RedisStorage`` (shared by shards)
-Cooldowns            /daily /spin /hclaim /shop refresh — sub-ms reads, TTL-native
-Leaderboards         ZSETs for /top (coins, claims, streak) — O(log N) updates
-Spawn queue          ZSET scored by next-fire time; the scheduler pops due chats
-Work queues          Streams (``XADD``/``XREADGROUP``) for broadcast + settlement
-Locks                ``SET NX PX`` so a double-tap or webhook retry can't pay twice
-Catalogue cache      /chance, /claimlist, character lookups (invalidated by admin ops)
-===================  ==========================================================
-
-Postgres stays the source of truth for money and collections; Redis is a *cache
-and coordination layer* with TTLs, so losing it degrades speed, not correctness.
+* :class:`Cache` — read-through cache for the hot catalogue reads
+  (``/chance``, ``/claimlist``, character lookups). Written a handful of times
+  a day, read thousands of times a minute; everything involving money, spawns,
+  bids or claims goes straight to the database.
+* :class:`Redis` — optional: shared FSM state, cooldowns, leaderboards, the
+  spawn queue, work streams, locks and pub/sub. Configured with ``REDIS_URL``;
+  without it the bot runs on in-process state (single worker) and the cache
+  degrades to a small in-process TTL dict.
 """
 
 from __future__ import annotations
 
+import asyncio
 import json
 import time
+from collections.abc import Awaitable, Callable
 from typing import Any
 
 from waifu.logging import get_logger
 from waifu.settings import Settings, get_settings
 
-log = get_logger("db.redis")
+log = get_logger("db.state")
 
+Key = tuple[str | int, ...]
+
+
+# ----------------------------------------------------------------------- cache
+class _LocalTTL:
+    """Fallback when Redis is not configured (dev, tests, single process)."""
+
+    def __init__(self, max_items: int = 2048) -> None:
+        self._data: dict[str, tuple[float, Any]] = {}
+        self._max = max_items
+        self._lock = asyncio.Lock()
+
+    async def get(self, key: str) -> Any:
+        async with self._lock:
+            item = self._data.get(key)
+            if item is None:
+                return None
+            expires, value = item
+            if expires < time.monotonic():
+                self._data.pop(key, None)
+                return None
+            return value
+
+    async def set(self, key: str, value: Any, ttl: int) -> None:
+        async with self._lock:
+            if len(self._data) >= self._max:  # pragma: no cover - memory guard
+                for stale in [k for k, (e, _) in self._data.items() if e < time.monotonic()]:
+                    self._data.pop(stale, None)
+                if len(self._data) >= self._max:
+                    self._data.pop(next(iter(self._data)))
+            self._data[key] = (time.monotonic() + ttl, value)
+
+    async def delete(self, *keys: str) -> None:
+        async with self._lock:
+            for key in keys:
+                self._data.pop(key, None)
+
+    async def keys_with_prefix(self, prefix: str) -> list[str]:
+        async with self._lock:
+            return [k for k in self._data if k.startswith(prefix)]
+
+    async def clear(self) -> None:
+        async with self._lock:
+            self._data.clear()
+
+
+class Cache:
+    """JSON read-through cache with prefix invalidation.
+
+    Versioned namespaces make invalidation O(1): ``invalidate("chars")`` bumps a
+    counter so every previously cached ``chars:*`` key is unreachable instead of
+    needing SCAN (which is not allowed on managed Redis in some setups).
+    """
+
+    def __init__(self, redis: Any = None, *, prefix: str = "uwb", local_ttl: int = 5) -> None:
+        self._redis = redis
+        self._prefix = prefix
+        self._local = _LocalTTL()
+        self._local_ttl = local_ttl
+        self._versions: dict[str, int] = {}
+
+    @property
+    def enabled(self) -> bool:
+        return self._redis is not None
+
+    async def close(self) -> None:
+        await self._local.clear()
+
+    # ------------------------------------------------------------------- keys
+    def _ver_key(self, namespace: str) -> str:
+        return f"{self._prefix}:c:ver:{namespace}"
+
+    async def _key(self, namespace: str, *parts: str | int) -> str:
+        """The full key, *awaiting* the namespace version.
+
+        This used to be a synchronous ``f-string`` that interpolated ``self._version(...)`` —
+        a coroutine object — so every generated key was unique per call: reads never hit,
+        ``invalidate`` bumped a version nothing consulted, and the whole cache degraded to a
+        write-only store. The async signature is the fix; :mod:`tests.test_cache` is the tripwire.
+        """
+        version = await self._version(namespace)
+        return f"{self._prefix}:c:{version}:{namespace}:{':'.join(str(p) for p in parts)}"
+
+    async def _version(self, namespace: str) -> int:
+        if namespace in self._versions:
+            return self._versions[namespace]
+        version = 0
+        if self._redis is not None:
+            raw = await self._redis.get(self._ver_key(namespace))
+            version = int(raw) if raw and str(raw).isdigit() else 0
+        self._versions[namespace] = version
+        return version
+
+    async def get(self, namespace: str, *parts: str | int) -> Any:
+        key = await self._key(namespace, *parts)
+        if self._redis is not None:
+            raw = await self._redis.get(key)
+            if raw is not None:
+                try:
+                    return json.loads(raw)
+                except (TypeError, json.JSONDecodeError):  # pragma: no cover
+                    return None
+            return None
+        return await self._local.get(key)
+
+    async def set(
+        self, namespace: str, key_parts: tuple[str | int, ...], value: Any, ttl: int
+    ) -> None:
+        full = await self._key(namespace, *key_parts)
+        if self._redis is not None:
+            await self._redis.set(full, json.dumps(value, default=str, separators=(",", ":")), ttl)
+            return
+        await self._local.set(full, value, ttl or self._local_ttl)
+
+    async def get_or_set(
+        self,
+        namespace: str,
+        key_parts: tuple[str | int, ...],
+        loader: Callable[[], Awaitable[Any]],
+        *,
+        ttl: int = 60,
+    ) -> Any:
+        """Fetch, or compute-and-cache. Loader exceptions are not cached."""
+        cached = await self.get(namespace, *key_parts)
+        if cached is not None:
+            return cached
+        value = await loader()
+        if value is not None:
+            await self.set(namespace, key_parts, value, ttl)
+        return value
+
+    async def delete(self, namespace: str, *parts: str | int) -> None:
+        key = await self._key(namespace, *parts)
+        if self._redis is not None:
+            await self._redis.delete(key)
+            return
+        await self._local.delete(key)
+
+    async def invalidate(self, namespace: str) -> None:
+        """Make every cached entry in ``namespace`` unreachable (version bump)."""
+        version = await self._version(namespace) + 1
+        self._versions[namespace] = version
+        if self._redis is not None:
+            await self._redis.set(self._ver_key(namespace), str(version), None)
+        else:
+            for key in await self._local.keys_with_prefix(
+                f"{self._prefix}:c:{version - 1}:{namespace}"
+            ):
+                await self._local.delete(key)
+
+    async def stats(self) -> dict[str, Any]:
+        return {"backend": "redis" if self.enabled else "local", "namespaces": dict(self._versions)}
+
+
+#: Namespaces used by the services layer — declared here so a typo fails fast.
+NS_CATALOGUE = "catalogue"
+NS_ODDS = "odds"
+NS_GROUPS = "groups"
+NS_LEADERBOARD = "leaderboard"
+NS_USER = "user"
+CACHE_NAMESPACES = (NS_CATALOGUE, NS_ODDS, NS_GROUPS, NS_LEADERBOARD, NS_USER)
+
+
+# ----------------------------------------------------------------------- redis
 # Lua: "decrement if positive", atomic. Used for item/shield/charge spends.
 _DECREMENT_IF_POSITIVE = """
 local v = redis.call('GET', KEYS[1])
@@ -50,7 +215,11 @@ return -2
 
 
 class Redis:
-    """Thin, typed-ish facade over redis.asyncio with namespaced keys."""
+    """Thin, typed-ish facade over redis.asyncio with namespaced keys.
+
+    Only built when ``REDIS_URL`` is set (see :meth:`Redis.create`); the
+    application runs fine without it (in-process state, single worker).
+    """
 
     def __init__(self, client: Any, prefix: str) -> None:
         self._client = client

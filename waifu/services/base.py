@@ -20,7 +20,7 @@ from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any
 
 from waifu.core.context import AppContext
-from waifu.db.redis_client import Redis
+from waifu.db.state import Redis
 from waifu.settings import Settings
 
 if TYPE_CHECKING:  # pragma: no cover

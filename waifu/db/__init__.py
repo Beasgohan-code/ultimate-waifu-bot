@@ -9,8 +9,9 @@ detail:
 * ``models``       — the tables (the shape of the data)
 * ``migrations``   — ordered schema upgrades (re-run safe, recorded)
 * ``repositories`` — the SQL per domain (users, economy, gacha, …)
-* ``cache`` / ``redis_client`` / ``seed`` — hot, non-source-of-truth state
-  and the optional starter roster
+* ``state``        — hot, non-source-of-truth state (the catalogue cache and
+  the optional Redis: cooldowns, queues, leaderboards)
+* ``seed``         — the tier ladders + the optional starter roster
 """
 
 from waifu.db.database import BACKUP_MAGIC, BackupError, Database, prune_backups

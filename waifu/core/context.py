@@ -18,7 +18,7 @@ import time
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any
 
-from waifu.db.cache import Cache
+from waifu.db.state import Cache
 from waifu.logging import get_logger
 from waifu.settings import FeatureFlags, Settings
 from waifu.tg.caps import Caps
@@ -29,7 +29,7 @@ if TYPE_CHECKING:  # pragma: no cover
     from aiogram import Bot
 
     from waifu.db import Database
-    from waifu.db.redis_client import Redis
+    from waifu.db.state import Redis
     from waifu.services.ai import AiService
     from waifu.services.auction import AuctionService
     from waifu.services.cards import CardService

@@ -402,7 +402,7 @@ async def ban(
 # Design notes worth keeping:
 #
 # * no table, no migration. A pending join is a 15-minute, three-try state, so it lives in
-#   :class:`~waifu.db.cache.Cache` (Redis when configured, TTL map otherwise) keyed by
+#   :class:`~waifu.db.state.Cache` (Redis when configured, TTL map otherwise) keyed by
 #   ``(chat_id, user_id)`` — which is also what Telegram uses to identify a join request.
 # * an empty roster must never lock a group: with fewer than four characters the gate answers
 #   ``approve`` immediately, so a fresh install can still turn the feature on.

@@ -40,8 +40,7 @@ from waifu.core.bot import (
 from waifu.core.context import AppContext
 from waifu.core.dp import RegistrationReport, build_dispatcher, build_storage
 from waifu.db import Database
-from waifu.db.cache import Cache
-from waifu.db.redis_client import Redis
+from waifu.db.state import Cache, Redis
 from waifu.logging import get_logger, setup_logging
 from waifu.services import build as build_services
 from waifu.settings import Settings, get_settings
