@@ -207,7 +207,7 @@ async def _streaks(ctx: AppContext, *, limit: int) -> dict[str, int]:
     from sqlalchemy import select
 
     from waifu.db.models import Streak
-    from waifu.db.repositories.stats import kv_get, kv_set
+    from waifu.db.repo import stats
     from waifu.utils.time import now_utc
 
     if ctx.bot is None:
@@ -227,7 +227,9 @@ async def _streaks(ctx: AppContext, *, limit: int) -> dict[str, int]:
         )
         # Prune cycles that are over; keep only today's markers.
         warned = {
-            k: v for k, v in (await kv_get(session, "streak_warnings")).items() if v == yesterday
+            k: v
+            for k, v in (await stats.kv_get(session, "streak_warnings")).items()
+            if v == yesterday
         }
         fresh = [row for row in at_risk if warned.get(str(row.user_id)) != yesterday]
     if not fresh:
@@ -251,7 +253,7 @@ async def _streaks(ctx: AppContext, *, limit: int) -> dict[str, int]:
         if result.outcome is SendOutcome.SENT:
             sent += 1
     async with ctx.db.tx() as session:
-        await kv_set(session, "streak_warnings", warned)
+        await stats.kv_set(session, "streak_warnings", warned)
     return {"streak_warnings": sent}
 
 
@@ -298,10 +300,10 @@ async def _backup(ctx: AppContext, *, limit: int) -> dict[str, int]:
     a day — "no data loss" must never turn into "disk full".
     """
     from waifu.db import prune_backups
-    from waifu.db.repositories.stats import kv_get, kv_set
+    from waifu.db.repo import stats
 
     async with ctx.db.tx() as session:
-        last = await kv_get(session, "last_backup") or {}
+        last = await stats.kv_get(session, "last_backup") or {}
     if time.time() - float(last.get("at", 0)) < 20 * 3600:
         return {}
     path, counts = await ctx.db.backup(ctx.settings.backup_dir)
@@ -313,7 +315,7 @@ async def _backup(ctx: AppContext, *, limit: int) -> dict[str, int]:
         silent=True,
     )
     async with ctx.db.tx() as session:
-        await kv_set(session, "last_backup", {"at": time.time(), "file": path.name})
+        await stats.kv_set(session, "last_backup", {"at": time.time(), "file": path.name})
     return {"rows": total, "pruned": pruned}
 
 

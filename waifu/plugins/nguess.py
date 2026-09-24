@@ -157,14 +157,14 @@ async def ngpoll(message: Message, ctx: AppContext, session: Any, command: Comma
     except Exception:  # pragma: no cover - chats without poll rights
         await _announce(message, ctx, view, mode="text")
         return
-    from waifu.db.repositories import spawns as spawn_repo
+    from waifu.db.repo import spawns as spawn_repo
 
     await spawn_repo.attach_guess_message(session, int(view.session.id), int(poll.message_id))
     await text(message, ctx, "👆 vote in the poll — the first correct option wins the reward")
 
 
 async def _option_names(session: Any, ctx: AppContext, character: Any) -> list[str]:
-    from waifu.db.repositories import characters as char_repo
+    from waifu.db.repo import characters as char_repo
 
     right = getattr(character, "name", "") or ""
     pool = await char_repo.by_rarity(

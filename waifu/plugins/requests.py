@@ -17,7 +17,7 @@ from aiogram import F, Router
 from aiogram.filters import Command, CommandObject
 from aiogram.types import CallbackQuery, InlineKeyboardButton, Message
 
-from waifu.db.repositories import characters as char_repo
+from waifu.db.repo import characters as char_repo
 from waifu.plugins._kit import Args, cb, mention, note, staff_of, text
 
 if TYPE_CHECKING:  # pragma: no cover

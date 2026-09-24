@@ -662,7 +662,7 @@ async def _gate_question(ctx: AppContext, session: Any, *, chat_id: int) -> dict
     """
     import secrets
 
-    from waifu.db.repositories import characters as char_repo
+    from waifu.db.repo import characters as char_repo
 
     async def _load() -> dict[str, Any] | None:
         totals = await char_repo.totals(session)

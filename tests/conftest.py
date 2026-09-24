@@ -30,7 +30,7 @@ from sqlalchemy import func, select
 from waifu.core.context import AppContext
 from waifu.db import Database
 from waifu.db.models import Character
-from waifu.db.repositories import users as user_repo
+from waifu.db.repo import users as user_repo
 from waifu.db.seed import seed_all
 from waifu.db.state import Cache
 from waifu.services import build as build_services
@@ -107,7 +107,7 @@ async def player(ctx) -> int:
     user_id = 4242
     async with ctx.db.tx() as session:
         await user_repo.upsert(session, user_id, username="tester", first_name="Test")
-        from waifu.db.repositories import economy as ledger
+        from waifu.db.repo import economy as ledger
 
         await ledger.credit(session, user_id, 5_000_000, "admin_grant", reference="fixture")
     return user_id
@@ -119,7 +119,7 @@ async def partner(ctx) -> int:
     user_id = 9999
     async with ctx.db.tx() as session:
         await user_repo.upsert(session, user_id, username="partner", first_name="Part")
-        from waifu.db.repositories import economy as ledger
+        from waifu.db.repo import economy as ledger
 
         await ledger.credit(session, user_id, 100_000, "admin_grant", reference="fixture")
     return user_id

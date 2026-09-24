@@ -162,10 +162,10 @@ class AppContext:
 
     async def group_snapshot(self, chat_id: int) -> dict[str, Any] | None:
         """Per-group settings for gates + the spawn scheduler (cached 30 s)."""
-        from waifu.db.repositories.spawns import group as get_group
+        from waifu.db.repo import spawns
 
         async with self.db.tx() as session:
-            row = await get_group(session, chat_id)
+            row = await spawns.group(session, chat_id)
             if row is None:
                 return None
             data = row.data or {}
@@ -292,11 +292,11 @@ class AppContext:
         fresh schema mid-migration) keeps the env value rather than breaking
         startup.
         """
-        from waifu.db.repositories.stats import kv_get
+        from waifu.db.repo import stats
 
         try:
             async with self.db.tx() as session:
-                overrides = await kv_get(session, "runtime_overrides")
+                overrides = await stats.kv_get(session, "runtime_overrides")
         except Exception as exc:  # pragma: no cover - startup must not die on a kv read
             log.warning("runtime overrides unreadable (%s) — env values stand", exc)
             return

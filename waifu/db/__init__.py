@@ -8,7 +8,8 @@ detail:
 
 * ``models``       — the tables (the shape of the data)
 * ``migrations``   — ordered schema upgrades (re-run safe, recorded)
-* ``repositories`` — the SQL per domain (users, economy, gacha, …)
+* ``repo``         — the SQL per domain (users, economy, gacha, …) — one file,
+  namespace classes per domain: ``from waifu.db.repo import users as user_repo``
 * ``state``        — hot, non-source-of-truth state (the catalogue cache and
   the optional Redis: cooldowns, queues, leaderboards)
 * ``seed``         — the tier ladders + the optional starter roster

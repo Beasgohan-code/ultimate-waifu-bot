@@ -22,8 +22,8 @@ import httpx
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from waifu.db.models import Character
-from waifu.db.repositories import ai as ai_repo
-from waifu.db.repositories import users as user_repo
+from waifu.db.repo import ai as ai_repo
+from waifu.db.repo import users as user_repo
 from waifu.errors import AISetupError, CooldownActive, NotFound
 from waifu.services.base import Service
 from waifu.utils.text import chunk_message, truncate

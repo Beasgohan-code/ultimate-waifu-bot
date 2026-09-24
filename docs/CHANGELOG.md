@@ -1,5 +1,27 @@
 # Changelog
 
+## 2026-09-24 — the whole repository layer in one file
+
+- `waifu/db/repositories/` (15 modules) is now `waifu/db/repo.py`. The database
+  story is literally one file pair: `database.py` (the engine — `tx()`/`query()`,
+  backup/restore) and `repo.py` (every SQL access function).
+- Domains are namespace classes, called exactly as the old modules were:
+  `from waifu.db.repo import users as user_repo`. Shared constants
+  (`SNIPE_WINDOW`, `ITEMS`, `PERMISSIONS`, …) and the row dataclasses
+  (`Owned`, `ItemDef`, `PityState`, …) live at module level; the ones services
+  address through a domain (`items_repo.ITEMS`, `collection_repo.Owned`) are
+  also exposed on their domain, so no call site had to change shape.
+- The merge was mechanical, not hand-rewritten: an AST transform moved each
+  module into its class, re-pointed intra-module calls
+  (`helper(...)` → `Domain.helper(...)`), and a verification tool re-compared
+  all 312 functions, 7 dataclasses and 15 constants against the originals —
+  structurally identical, then the full 491-test suite.
+
+## 2026-09-24 — cache and Redis merged into `waifu/db/state.py`
+
+- `waifu/db/cache.py` + `waifu/db/redis_client.py` → one file,
+  `waifu/db/state.py` (`Cache` + `Redis`): the hot, non-source-of-truth layer.
+
 ## 2026-09-23 — one database, automatic backups, fastest startup
 
 - **One database.** `DATABASE_URL` now defaults to a single SQLite file

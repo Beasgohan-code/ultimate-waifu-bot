@@ -134,7 +134,7 @@ async def share_link_button(callback_query: CallbackQuery, ctx: AppContext) -> N
 @router.message(Command("compact", "simple"))
 async def compact(message: Message, ctx: AppContext, session: Any, access: Access) -> None:
     """Toggle the plain-text card mode (a11y + old clients; stored per player)."""
-    from waifu.db.repositories import users as user_repo
+    from waifu.db.repo import users as user_repo
 
     pref = await user_repo.prefs(session, access.user_id)
     wanted = not bool((pref.flags or {}).get("compact", False))

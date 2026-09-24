@@ -15,8 +15,8 @@ from __future__ import annotations
 
 import pytest
 
-from waifu.db.repositories import characters as char_repo
-from waifu.db.repositories import collection as collection_repo
+from waifu.db.repo import characters as char_repo
+from waifu.db.repo import collection as collection_repo
 from waifu.plugins._kit import Args
 from waifu.plugins.collection import _page_rows, _pager_extra, _parse_extra, entry_args
 
@@ -57,7 +57,7 @@ async def test_pager_state_travels_in_the_callback_data(ctx, tx, player) -> None
 
 
 async def test_pages_and_buttons(ctx, tx, player, any_character) -> None:
-    from waifu.db.repositories import characters as chars
+    from waifu.db.repo import characters as chars
 
     roster, _found = await chars.search(tx, "", limit=6)
     assert len(roster) >= 4, "the shipped catalogue must be big enough to page through"

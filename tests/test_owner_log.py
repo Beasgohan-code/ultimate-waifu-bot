@@ -34,10 +34,10 @@ from sqlalchemy import select
 from waifu.core.health import build_app as build_health_app
 from waifu.core.health import resolve_port
 from waifu.db.models import Character, SubscriptionAccess
-from waifu.db.repositories import characters as char_repo
-from waifu.db.repositories import collection as collection_repo
-from waifu.db.repositories import economy as ledger
-from waifu.db.repositories import monetize as monetize_repo
+from waifu.db.repo import characters as char_repo
+from waifu.db.repo import collection as collection_repo
+from waifu.db.repo import economy as ledger
+from waifu.db.repo import monetize as monetize_repo
 from waifu.enums import Rarity
 from waifu.utils.time import now_utc
 
@@ -788,7 +788,7 @@ def _setlog_command(args: str) -> Any:
 
 async def test_setlogchannel_moves_the_feed_and_persists_it(ctx, tx, player) -> None:
     from waifu.core.access import Access
-    from waifu.db.repositories.stats import kv_get
+    from waifu.db.repo import stats
     from waifu.enums import Role
     from waifu.plugins.sudo import setlogchannel
 
@@ -803,7 +803,7 @@ async def test_setlogchannel_moves_the_feed_and_persists_it(ctx, tx, player) -> 
     )
     # Runtime change, database persistence, and the test line in the new channel.
     assert ctx.settings.log_channel_id == new_chat
-    assert (await kv_get(tx, "runtime_overrides"))["log_channel_id"] == new_chat
+    assert (await stats.kv_get(tx, "runtime_overrides"))["log_channel_id"] == new_chat
     (test,) = ctx.bot.to("send_message", new_chat)
     assert "log channel moved" in test["text"]
 
@@ -848,10 +848,10 @@ async def test_setlogchannel_rejects_a_group(ctx, tx, player) -> None:
 
 async def test_startup_applies_the_stored_channel_override(ctx, tx) -> None:
     """What /setlogchannel wrote survives a restart (this is the whole point)."""
-    from waifu.db.repositories.stats import kv_set
+    from waifu.db.repo import stats
 
     assert ctx.settings.log_channel_id == 0
-    await kv_set(tx, "runtime_overrides", {"log_channel_id": 555777})
+    await stats.kv_set(tx, "runtime_overrides", {"log_channel_id": 555777})
     await tx.commit()
     await ctx._apply_runtime_overrides()
     assert ctx.settings.log_channel_id == 555777
@@ -1013,7 +1013,7 @@ async def test_broadcast_schedule_fire_and_log(bot: Recorder, ctx, tx, player) -
 
 # ------------------------------------------------------- character requests
 async def test_request_queue_approve_flow(bot: Recorder, ctx, tx, player, partner) -> None:
-    from waifu.db.repositories import characters as char_repo
+    from waifu.db.repo import characters as char_repo
     from waifu.errors import NotFound
 
     row = await char_repo.submit_request(

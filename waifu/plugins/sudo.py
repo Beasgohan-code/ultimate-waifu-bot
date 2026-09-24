@@ -97,7 +97,7 @@ async def setrole(
     if target is None or wanted not in {"user", "moderator", "admin", "owner"}:
         await text(message, ctx, "Usage: <code>/setrole @player admin</code>")
         return
-    from waifu.db.repositories import users as user_repo
+    from waifu.db.repo import users as user_repo
 
     await user_repo.set_role(session, target, Role(wanted))
     await ctx.moderation.audit(
@@ -337,7 +337,7 @@ async def setlogchannel(
     if access.role is not Role.OWNER:
         await refuse(message, "only the bot owner moves the log channel.")
         return
-    from waifu.db.repositories.stats import kv_get, kv_set
+    from waifu.db.repo import stats
     from waifu.utils.text import esc
 
     args = Args.of(command)
@@ -365,9 +365,9 @@ async def setlogchannel(
         await text(message, ctx, problem)
         return
 
-    overrides = await kv_get(session, "runtime_overrides")
+    overrides = await stats.kv_get(session, "runtime_overrides")
     overrides["log_channel_id"] = chat_id
-    await kv_set(session, "runtime_overrides", overrides)
+    await stats.kv_set(session, "runtime_overrides", overrides)
     ctx.settings = ctx.settings.model_copy(update={"log_channel_id": chat_id})
     await session.commit()
 

@@ -110,9 +110,9 @@ waifu/
   core/        app assembly, dispatcher + plugin loading, middlewares, access/permissions,
                context (the service registry), jobs (the timer loop), CLI (waifu/__main__.py)
   db/          one database: database.py (the engine + tx/query + backup/restore),
-               models, versioned migrations, seed (tier ladders + catalogue),
-               repositories/ (all SQL lives here), state.py (the hot layer:
-               catalogue cache + optional Redis — never the source of truth)
+               repo.py (all SQL lives here — one file, every domain), models,
+               versioned migrations, seed (tier ladders + catalogue), state.py (the
+               hot layer: catalogue cache + optional Redis — never the source of truth)
   services/    economy, gacha, collection, items, spawn, auction, trading, codes, gifts,
                progress, stats, moderation, premium, ai, cards, hstats — no Telegram types
   tg/          one module per new Bot API surface: rich messages, drafts, ephemerals,

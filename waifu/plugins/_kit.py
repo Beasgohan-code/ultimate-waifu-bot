@@ -240,7 +240,7 @@ async def resolve_user(session: Any, event: Message | CallbackQuery, raw: str = 
     the player meant. The reference bot accepted ``@username`` and nothing else, so
     "/rob some one with a space in their name" simply failed.
     """
-    from waifu.db.repositories import users as user_repo
+    from waifu.db.repo import users as user_repo
 
     reply_to = event.reply_to_message if isinstance(event, Message) else None
     if reply_to is not None and reply_to.from_user is not None and not (raw or "").strip():

@@ -25,8 +25,8 @@ import pytest
 from aiogram.types import CallbackQuery, Message
 
 from waifu.core.access import Access
-from waifu.db.repositories import collection as collection_repo
-from waifu.db.repositories import users as user_repo
+from waifu.db.repo import collection as collection_repo
+from waifu.db.repo import users as user_repo
 from waifu.enums import Role
 from waifu.services.cards import POPPIANS, PROFILE_SIZE, CardService, ProfileArt
 

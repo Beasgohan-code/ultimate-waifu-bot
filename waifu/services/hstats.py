@@ -20,11 +20,11 @@ from typing import Any
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from waifu.db.models import Character
-from waifu.db.repositories import characters as char_repo
-from waifu.db.repositories import collection as collection_repo
-from waifu.db.repositories import spawns as spawn_repo
-from waifu.db.repositories import stats as stats_repo
-from waifu.db.repositories import users as user_repo
+from waifu.db.repo import characters as char_repo
+from waifu.db.repo import collection as collection_repo
+from waifu.db.repo import spawns as spawn_repo
+from waifu.db.repo import stats as stats_repo
+from waifu.db.repo import users as user_repo
 from waifu.enums import Rarity
 from waifu.services.base import Service
 from waifu.utils.misc import bar, pct
@@ -172,7 +172,7 @@ class HStatsService(Service):
 
     async def global_pity_stats(self, session: AsyncSession) -> dict[str, Any]:
         """Server-wide pull telemetry — the numbers that justify a pity change."""
-        from waifu.db.repositories import progress as progress_repo
+        from waifu.db.repo import progress as progress_repo
 
         return await progress_repo.global_roll_stats(session)
 

@@ -268,7 +268,7 @@ async def addchar(
     except ValueError:
         price = int(rarity.base_price)
     tags = fields[4] if len(fields) > 4 else ""
-    from waifu.db.repositories import characters as char_repo
+    from waifu.db.repo import characters as char_repo
 
     character, created = await char_repo.create_or_update(
         session,
@@ -350,7 +350,7 @@ async def delchar(
     except NotFound:
         await text(message, ctx, f"Nothing called “{shorten(query, 40)}”.")
         return
-    from waifu.db.repositories import characters as char_repo
+    from waifu.db.repo import characters as char_repo
 
     holders = await ctx.collection.holders(session, int(character.id), limit=3)
     if not force:
@@ -382,7 +382,7 @@ async def hidechar(
     except NotFound:
         await text(message, ctx, f"Nothing called “{shorten(query, 40)}”.")
         return
-    from waifu.db.repositories import characters as char_repo
+    from waifu.db.repo import characters as char_repo
 
     await char_repo.set_active(session, int(character.id), enable)
     await text(message, ctx, f"{'👁️ visible' if enable else '🙈 hidden'}: <b>{character.name}</b>")
@@ -409,7 +409,7 @@ async def setchance(
     except ValueError:
         await refuse(message, "the last argument must be a percentage")
         return
-    from waifu.db.repositories import characters as char_repo
+    from waifu.db.repo import characters as char_repo
 
     if claim:
         await char_repo.set_claim_chance(session, rarity, value)
@@ -441,7 +441,7 @@ async def banner(
             "Usage: <code>/banner 12 44 87</code> — ids from /chars. Empty list clears the banner.",
         )
         return
-    from waifu.db.repositories import characters as char_repo
+    from waifu.db.repo import characters as char_repo
 
     count = await char_repo.set_banner(session, ids)
     await text(message, ctx, f"🎯 banner weight set on {count} character(s).")
@@ -464,7 +464,7 @@ async def media(
     if not character_id:
         await text(message, ctx, "Usage: <code>/media 42</code> with a photo or video attached.")
         return
-    from waifu.db.repositories import characters as char_repo
+    from waifu.db.repo import characters as char_repo
 
     await char_repo.attach_media(
         session,
@@ -508,7 +508,7 @@ async def chancelist(message: Message, ctx: AppContext, session: Any) -> None:
     The old bot kept these in two commands (``/chance`` and ``/setclaim``'s table) and
     admins routinely adjusted the wrong one. One table, two columns.
     """
-    from waifu.db.repositories import characters as char_repo
+    from waifu.db.repo import characters as char_repo
 
     drops = dict(await char_repo.rarity_chances(session, enabled_only=False) or [])
     claims = dict(await char_repo.claim_chances(session, enabled_only=False) or [])
@@ -538,7 +538,7 @@ async def setclaim(
 ) -> None:
     """/setclaim <tier> <percent> — the claim ladder only (gacha rates: /setchance)."""
     staff_of(access)
-    from waifu.db.repositories import characters as char_repo
+    from waifu.db.repo import characters as char_repo
 
     args = Args.of(command)
     wanted = {rarity.label.lower(): rarity for rarity in Rarity}

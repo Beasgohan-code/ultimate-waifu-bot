@@ -20,9 +20,9 @@ from sqlalchemy import delete, func, select, update
 
 from waifu.db import BackupError, Database, prune_backups
 from waifu.db.models import Base, Character, Group, ScheduledBroadcast, User
-from waifu.db.repositories import economy as ledger
-from waifu.db.repositories import stats as stats_repo
-from waifu.db.repositories import users as user_repo
+from waifu.db.repo import economy as ledger
+from waifu.db.repo import stats as stats_repo
+from waifu.db.repo import users as user_repo
 from waifu.utils.time import now_utc
 
 #: Two test players so the ledger has FK children to survive the round trip.

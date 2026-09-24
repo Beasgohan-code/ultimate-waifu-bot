@@ -22,16 +22,16 @@ from typing import Any
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from waifu.db.models import User
-from waifu.db.repositories import characters as char_repo
-from waifu.db.repositories import collection as collection_repo
-from waifu.db.repositories import economy as ledger
-from waifu.db.repositories import items as items_repo
-from waifu.db.repositories import moderation as mod_repo
-from waifu.db.repositories import monetize as monetize_repo
-from waifu.db.repositories import progress as progress_repo
-from waifu.db.repositories import spawns as spawn_repo
-from waifu.db.repositories import stats as stats_repo
-from waifu.db.repositories import users as user_repo
+from waifu.db.repo import characters as char_repo
+from waifu.db.repo import collection as collection_repo
+from waifu.db.repo import economy as ledger
+from waifu.db.repo import items as items_repo
+from waifu.db.repo import moderation as mod_repo
+from waifu.db.repo import monetize as monetize_repo
+from waifu.db.repo import progress as progress_repo
+from waifu.db.repo import spawns as spawn_repo
+from waifu.db.repo import stats as stats_repo
+from waifu.db.repo import users as user_repo
 from waifu.enums import Rarity
 from waifu.errors import NotFound
 from waifu.services.base import Service
@@ -405,12 +405,12 @@ class StatsService(Service):
         }
 
     async def _purge_trades(self, session: AsyncSession, *, days: int) -> int:
-        from waifu.db.repositories import trades as trade_repo
+        from waifu.db.repo import trades as trade_repo
 
         return await trade_repo.purge_trade_history(session, older_than_days=days)
 
     async def _purge_codes(self, session: AsyncSession) -> int:
-        from waifu.db.repositories import trades as trade_repo
+        from waifu.db.repo import trades as trade_repo
 
         return await trade_repo.purge_expired(session)
 
@@ -425,7 +425,7 @@ class StatsService(Service):
         """
         from datetime import timedelta
 
-        from waifu.db.repositories import monetize as monetize_repo
+        from waifu.db.repo import monetize as monetize_repo
         from waifu.utils.time import now_utc
 
         since = now_utc() - timedelta(days=days)

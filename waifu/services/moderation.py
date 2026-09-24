@@ -28,12 +28,12 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from waifu.core.access import Access
 from waifu.db.models import ModerationCase
-from waifu.db.repositories import moderation as mod_repo
-from waifu.db.repositories import monetize as monetize_repo
-from waifu.db.repositories import spawns as spawn_repo
-from waifu.db.repositories import stats as stats_repo
-from waifu.db.repositories import trades as trade_repo
-from waifu.db.repositories import users as user_repo
+from waifu.db.repo import moderation as mod_repo
+from waifu.db.repo import monetize as monetize_repo
+from waifu.db.repo import spawns as spawn_repo
+from waifu.db.repo import stats as stats_repo
+from waifu.db.repo import trades as trade_repo
+from waifu.db.repo import users as user_repo
 from waifu.errors import NotFound, PermissionDenied, WaifuError
 from waifu.services.base import Service
 from waifu.tg.notify import broadcast as _broadcast
@@ -433,7 +433,7 @@ class ModerationService(Service):
         actor_id: int,
     ) -> int:
         """Queue an announcement for a future moment (the ``/broadcast at …`` line)."""
-        from waifu.db.repositories import broadcasts as bc_repo
+        from waifu.db.repo import broadcasts as bc_repo
 
         row = await bc_repo.schedule(session, run_at=run_at, text=text, created_by=actor_id)
         await self.log_line(
@@ -443,12 +443,12 @@ class ModerationService(Service):
         return row.id
 
     async def pending_broadcasts(self, session: AsyncSession) -> list[Any]:
-        from waifu.db.repositories import broadcasts as bc_repo
+        from waifu.db.repo import broadcasts as bc_repo
 
         return await bc_repo.pending(session)
 
     async def cancel_broadcasts(self, session: AsyncSession) -> int:
-        from waifu.db.repositories import broadcasts as bc_repo
+        from waifu.db.repo import broadcasts as bc_repo
 
         return await bc_repo.cancel_all(session)
 
@@ -459,7 +459,7 @@ class ModerationService(Service):
         per row), so the resident loop and a cron ``waifu jobs`` cannot double-post.
         The owner's log channel gets the counts, same as an immediate broadcast.
         """
-        from waifu.db.repositories import broadcasts as bc_repo
+        from waifu.db.repo import broadcasts as bc_repo
 
         due_rows = await bc_repo.due(session)
         fired = failed = 0

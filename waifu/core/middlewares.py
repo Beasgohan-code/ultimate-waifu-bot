@@ -94,9 +94,9 @@ class ContextMiddleware(BaseMiddleware):
         single atomic UPDATE … RETURNING, so 200 members talking at once cannot
         lose counts or double-fire a spawn.
         """
-        from waifu.db.repositories.spawns import bump_message_count
+        from waifu.db.repo import spawns
 
-        _count, limit, triggered = await bump_message_count(
+        _count, limit, triggered = await spawns.bump_message_count(
             session, chat_id, spawn_limit_default=self.settings.spawn_default_limit
         )
         user.last_seen_at = now_utc()

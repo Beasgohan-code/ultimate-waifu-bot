@@ -30,8 +30,8 @@ from waifu.core.access import Access
 from waifu.db import Database
 from waifu.db.migrations import _personas
 from waifu.db.models import Character, RarityChance
-from waifu.db.repositories import characters as char_repo
-from waifu.db.repositories import spawns as spawn_repo
+from waifu.db.repo import characters as char_repo
+from waifu.db.repo import spawns as spawn_repo
 from waifu.db.seed import catalogue_rows, seed_all
 from waifu.enums import Rarity, Role
 from waifu.plugins import uploads

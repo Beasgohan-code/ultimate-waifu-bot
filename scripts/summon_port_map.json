@@ -99,7 +99,7 @@
         "waifu/core/middlewares.py",
         "waifu/plugins/moderation.py",
         "waifu/plugins/spawns.py",
-        "waifu/db/repositories/spawns.py"
+        "waifu/db/repo.py"
       ],
       "note": "Spam limiter (SPAM_LIMIT=20), group auto-registration from live traffic, and chatter-triggered spawns. Message counting is middleware with a Redis window; group tracking writes the same ``groups`` row that ``/groupsettings`` and ``/autospan`` read."
     },
@@ -119,7 +119,7 @@
         "waifu/plugins/moderation.py",
         "waifu/plugins/codes.py"
       ],
-      "note": "The big one: ``upload_character``/``upload_callback`` (ported word for word, from bytecode), ``add_character``/``update_character``/``delete`` -> ``/addchar`` ``/media`` ``/delchar``, ``change_chance``/``chance_list`` -> ``/setchance``/``chancelist``, ``ban``/``unban``/``warn``/``removeall`` -> moderation plugin, ``gen_code``/``redeem_code`` -> codes plugin, ``broadcast``/``save_group``/``transfer``/``removeall_callback`` -> ``/broadcast`` and group tables, ``is_sudo``/``check_sudo``/``addsudo_command`` -> sudo plugin, ``get_rarity``/``get_character_media``/``get_random_character`` -> ``waifu/db/repositories/characters.py``."
+      "note": "The big one: ``upload_character``/``upload_callback`` (ported word for word, from bytecode), ``add_character``/``update_character``/``delete`` -> ``/addchar`` ``/media`` ``/delchar``, ``change_chance``/``chance_list`` -> ``/setchance``/``chancelist``, ``ban``/``unban``/``warn``/``removeall`` -> moderation plugin, ``gen_code``/``redeem_code`` -> codes plugin, ``broadcast``/``save_group``/``transfer``/``removeall_callback`` -> ``/broadcast`` and group tables, ``is_sudo``/``check_sudo``/``addsudo_command`` -> sudo plugin, ``get_rarity``/``get_character_media``/``get_random_character`` -> ``waifu/db/repo.py``."
     },
     "commands_auction": {
       "status": "ported",
@@ -161,7 +161,7 @@
       "status": "adapted",
       "where": [
         "waifu/settings.py",
-        "waifu/db/repositories/characters.py",
+        "waifu/db/repo.py",
         ".env.example"
       ],
       "note": "Every constant is either a validated ``Settings`` field or a DB row (prices/chances), because in the reference the two could disagree. ``RARITY_DISPLAY`` (the 18 strings) is ``Rarity.display`` in ``waifu/enums.py`` and the two are asserted byte-identical by ``tests/test_uploads.py``. ``ALLOWED_IMAGE_HOSTS`` -> ``ALLOWED_MEDIA_HOSTS``."
@@ -169,7 +169,7 @@
     "database": {
       "status": "adapted",
       "where": [
-        "waifu/db/repositories",
+        "waifu/db/repo.py",
         "waifu/db/database.py",
         "waifu/db/migrations"
       ],
@@ -275,7 +275,7 @@
       "status": "adapted",
       "where": [
         "waifu/db/database.py",
-        "waifu/db/repositories",
+        "waifu/db/repo.py",
         "waifu/settings.py"
       ],
       "note": "The ``?``->``%s`` SQL translator, ``_is_table_info_query``, ``_normalise_value`` and ``using_postgres`` exist only because the reference hand-wrote SQL against two backends; SQLAlchemy removes the class of problem, so the port is 'no equivalent code', and ``configure()``/``connect()`` map onto settings + ``Database.from_settings`` with ``async with db.tx()`` as the savepoint door the middleware uses per update."

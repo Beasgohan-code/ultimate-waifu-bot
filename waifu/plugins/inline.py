@@ -34,7 +34,7 @@ from aiogram.types import (
     InputTextMessageContent,
 )
 
-from waifu.db.repositories import characters as char_repo
+from waifu.db.repo import characters as char_repo
 from waifu.enums import Rarity
 from waifu.logging import get_logger
 from waifu.tg.media import is_allowed_image_url

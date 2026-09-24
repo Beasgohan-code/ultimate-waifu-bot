@@ -59,7 +59,7 @@ async def profile(
 async def send_profile(
     event: Message | CallbackQuery, ctx: AppContext, session: Any, *, target: int, viewer: int
 ) -> None:
-    from waifu.db.repositories import users as user_repo
+    from waifu.db.repo import users as user_repo
 
     player = await user_repo.get(session, target)
     if player is None:
@@ -163,7 +163,7 @@ async def bio(
     """``/bio <text>`` sets the line under your name (their bot had no bio at all)."""
     if user is None:
         return
-    from waifu.db.repositories import users as user_repo
+    from waifu.db.repo import users as user_repo
 
     args = Args.of(command)
     if not args.raw:
@@ -197,7 +197,7 @@ async def setname(
         )
         return
     clean = " ".join(args.raw.split())[:48]
-    from waifu.db.repositories import users as user_repo
+    from waifu.db.repo import users as user_repo
 
     # ``upsert`` already owns "insert or update the identity fields", so a rename goes
     # through it instead of a second write path that forgets ``updated_at``.
@@ -251,7 +251,7 @@ async def glow(
     """Their ``/profileglow``: the name banner on your card. Off by default."""
     if user is None:
         return
-    from waifu.db.repositories import users as user_repo
+    from waifu.db.repo import users as user_repo
 
     pref = await user_repo.prefs(session, user.id)
     args = Args.of(command)
@@ -267,7 +267,7 @@ async def privacy(
 ) -> None:
     if user is None:
         return
-    from waifu.db.repositories import users as user_repo
+    from waifu.db.repo import users as user_repo
 
     pref = await user_repo.prefs(session, user.id)
     await user_repo.set_pref(session, user.id, show_balance=not pref.show_balance)
@@ -367,7 +367,7 @@ async def send_pcard(
     is never a hard error on a slim install."""
     from aiogram.types import InlineKeyboardButton
 
-    from waifu.db.repositories import users as user_repo
+    from waifu.db.repo import users as user_repo
     from waifu.tg.messages import style_button
 
     if await user_repo.get(session, target) is None:
@@ -445,7 +445,7 @@ async def pcard_toggle(
     if not target or target != access.user_id:
         await note(callback_query, "Only the owner of a card can change it.", alert=True)
         return
-    from waifu.db.repositories import users as user_repo
+    from waifu.db.repo import users as user_repo
 
     if action == "glow":
         wanted = parts[3] == "1" if len(parts) > 3 else None

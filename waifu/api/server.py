@@ -46,10 +46,10 @@ from waifu.api.auth import (
     InitDataRejected,
     identity_from_headers,
 )
-from waifu.db.repositories import characters as char_repo
-from waifu.db.repositories import collection as collection_repo
-from waifu.db.repositories import progress as progress_repo
-from waifu.db.repositories import users as user_repo
+from waifu.db.repo import characters as char_repo
+from waifu.db.repo import collection as collection_repo
+from waifu.db.repo import progress as progress_repo
+from waifu.db.repo import users as user_repo
 from waifu.enums import Rarity
 from waifu.errors import AlreadyClaimed, NotEnoughFunds, WaifuError
 from waifu.logging import get_logger

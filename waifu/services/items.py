@@ -2,7 +2,7 @@
 
 Two shops, because the reference bot conflated them and both were worse for it:
 
-* the **item shop** — a fixed catalogue (:data:`waifu.db.repositories.items.ITEMS`)
+* the **item shop** — a fixed catalogue (:data:`waifu.db.repo.ITEMS`)
   whose entries all *do* something (arm a shield, clear a cooldown, bank charges);
 * the **featured character pool** — ``shop_pools`` rows with ``refreshes_used``, so
   re-rolling is a priced action instead of the free "close and reopen until the one
@@ -23,12 +23,12 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from waifu.db.models import Character, ShopPool
-from waifu.db.repositories import characters as char_repo
-from waifu.db.repositories import collection as collection_repo
-from waifu.db.repositories import economy as ledger
-from waifu.db.repositories import items as items_repo
-from waifu.db.repositories import progress as progress_repo
-from waifu.db.repositories import users as user_repo
+from waifu.db.repo import characters as char_repo
+from waifu.db.repo import collection as collection_repo
+from waifu.db.repo import economy as ledger
+from waifu.db.repo import items as items_repo
+from waifu.db.repo import progress as progress_repo
+from waifu.db.repo import users as user_repo
 from waifu.enums import LedgerReason, Rarity
 from waifu.errors import AlreadyClaimed, CooldownActive, Locked, NotFound, WaifuError
 from waifu.services.base import Service

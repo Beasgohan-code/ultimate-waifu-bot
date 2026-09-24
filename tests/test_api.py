@@ -18,8 +18,8 @@ from aiohttp.test_utils import TestClient, TestServer
 from waifu.api import sign_init_data, validate_init_data
 from waifu.api.auth import InitDataRejected
 from waifu.api.server import ROUTES, build_app
-from waifu.db.repositories import economy as ledger
-from waifu.db.repositories import users as user_repo
+from waifu.db.repo import economy as ledger
+from waifu.db.repo import users as user_repo
 
 TOKEN = "123456:TEST-token-not-a-real-bot"  # noqa: S105 - not a secret, the fixture token
 

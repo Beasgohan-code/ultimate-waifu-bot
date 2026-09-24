@@ -23,12 +23,12 @@ from typing import Any
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from waifu.db.models import User
-from waifu.db.repositories import collection as collection_repo
-from waifu.db.repositories import economy as ledger
-from waifu.db.repositories import items as items_repo
-from waifu.db.repositories import metrics as metrics_repo
-from waifu.db.repositories import progress as progress_repo
-from waifu.db.repositories import users as user_repo
+from waifu.db.repo import collection as collection_repo
+from waifu.db.repo import economy as ledger
+from waifu.db.repo import items as items_repo
+from waifu.db.repo import metrics as metrics_repo
+from waifu.db.repo import progress as progress_repo
+from waifu.db.repo import users as user_repo
 from waifu.enums import LedgerReason, Rarity
 from waifu.errors import AlreadyClaimed, NotFound
 from waifu.services.base import Service
@@ -149,7 +149,7 @@ class ProgressService(Service):
     async def metrics(self, session: AsyncSession, user: User) -> dict[str, int]:
         """Everything an achievement or quest can measure, in a few COUNTs.
 
-        Counted from the source tables (see :mod:`waifu.db.repositories.metrics`)
+        Counted from the source tables (see :mod:`waifu.db.repo.metrics`)
         rather than from denormalised columns: an achievement that can silently drift
         is an achievement players will rightly call fake.
         """
@@ -190,7 +190,7 @@ class ProgressService(Service):
         }
 
     async def _has_paid(self, session: AsyncSession, user_id: int) -> bool:
-        from waifu.db.repositories import monetize as monetize_repo
+        from waifu.db.repo import monetize as monetize_repo
 
         return await monetize_repo.has_ever_paid(session, user_id)
 

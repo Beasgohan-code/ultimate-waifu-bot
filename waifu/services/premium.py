@@ -26,10 +26,10 @@ from typing import Any
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from waifu.db.repositories import economy as ledger
-from waifu.db.repositories import moderation as mod_repo
-from waifu.db.repositories import monetize as monetize_repo
-from waifu.db.repositories import users as user_repo
+from waifu.db.repo import economy as ledger
+from waifu.db.repo import moderation as mod_repo
+from waifu.db.repo import monetize as monetize_repo
+from waifu.db.repo import users as user_repo
 from waifu.enums import LedgerReason
 from waifu.errors import NotFound, PaywallRequired
 from waifu.services.base import Service
@@ -206,7 +206,7 @@ class PremiumService(Service):
             await monetize_repo.record_premium_granted(session, payload, int(order.premium_hours))
             granted["premium_hours"] = int(order.premium_hours)
         if order.character_id:
-            from waifu.db.repositories import collection as collection_repo
+            from waifu.db.repo import collection as collection_repo
 
             await collection_repo.grant(
                 session, order.user_id, int(order.character_id), source="stars"
@@ -283,7 +283,7 @@ class PremiumService(Service):
                     session, user_id, hours=-int(order.premium_hours), granted_by=0, source="refund"
                 )
             if order and order.character_id:
-                from waifu.db.repositories import collection as collection_repo
+                from waifu.db.repo import collection as collection_repo
 
                 await collection_repo.consume(
                     session, user_id, int(order.character_id), 1, releasing=True
@@ -643,8 +643,8 @@ class PremiumService(Service):
         )
         await monetize_repo.mark_delivered(session, payload)
         if order.character_id and user_id:
-            from waifu.db.repositories import characters as char_repo
-            from waifu.db.repositories import collection as collection_repo
+            from waifu.db.repo import characters as char_repo
+            from waifu.db.repo import collection as collection_repo
             from waifu.enums import Rarity
 
             await collection_repo.grant(session, user_id, int(order.character_id), source="stars")

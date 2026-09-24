@@ -28,12 +28,12 @@ from aiogram.types import InlineKeyboardButton
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from waifu.db.models import Character, GuessSession
-from waifu.db.repositories import characters as char_repo
-from waifu.db.repositories import collection as collection_repo
-from waifu.db.repositories import economy as ledger
-from waifu.db.repositories import progress as progress_repo
-from waifu.db.repositories import spawns as spawn_repo
-from waifu.db.repositories import users as user_repo
+from waifu.db.repo import characters as char_repo
+from waifu.db.repo import collection as collection_repo
+from waifu.db.repo import economy as ledger
+from waifu.db.repo import progress as progress_repo
+from waifu.db.repo import spawns as spawn_repo
+from waifu.db.repo import users as user_repo
 from waifu.enums import ChatMode, LedgerReason, Rarity
 from waifu.errors import AlreadyClaimed, NotFound, RosterEmpty
 from waifu.services.base import Service

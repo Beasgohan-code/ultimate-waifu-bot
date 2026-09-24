@@ -26,12 +26,12 @@ from typing import Any
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from waifu.db.models import Character, RedeemCode, TradeOffer
-from waifu.db.repositories import characters as char_repo
-from waifu.db.repositories import collection as collection_repo
-from waifu.db.repositories import economy as ledger
-from waifu.db.repositories import moderation as mod_repo
-from waifu.db.repositories import trades as trade_repo
-from waifu.db.repositories import users as user_repo
+from waifu.db.repo import characters as char_repo
+from waifu.db.repo import collection as collection_repo
+from waifu.db.repo import economy as ledger
+from waifu.db.repo import moderation as mod_repo
+from waifu.db.repo import trades as trade_repo
+from waifu.db.repo import users as user_repo
 from waifu.enums import LedgerReason, Rarity
 from waifu.errors import Locked, NotFound, WaifuError
 from waifu.services.base import Service

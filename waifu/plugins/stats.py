@@ -3,7 +3,7 @@
 Their leaderboards were rebuilt by ``SELECT``-ing every user into Python, sorting in
 memory and caching in a dict, so at ~50k players /top took seconds and timed out under
 load. Here the ranking is a single indexed SQL read with a Redis sorted-set fast path
-(:mod:`waifu.db.repositories.users`) and offsets, and the player's own rank is fetched
+(:mod:`waifu.db.repo.users`) and offsets, and the player's own rank is fetched
 with ``rank_of`` instead of "find yourself in the top 10".
 
 ``/server`` answers the question group owners actually ask ("is this bot alive in my

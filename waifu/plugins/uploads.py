@@ -53,7 +53,7 @@ from aiogram import F, Router
 from aiogram.filters import BaseFilter, Command, CommandObject
 from aiogram.types import CallbackQuery, InlineKeyboardButton, Message
 
-from waifu.db.repositories import characters as char_repo
+from waifu.db.repo import characters as char_repo
 from waifu.enums import Rarity
 from waifu.errors import RosterEmpty, WaifuError
 from waifu.logging import get_logger
@@ -305,7 +305,7 @@ def autoadd_fields(message: Message) -> tuple[str, str, Rarity]:
 
 
 async def is_autoadd_enabled(session: Any, chat_id: int) -> bool:
-    from waifu.db.repositories import spawns as spawn_repo
+    from waifu.db.repo import spawns as spawn_repo
 
     return await spawn_repo.group_switch(session, chat_id, "autoadd")
 
@@ -323,7 +323,7 @@ class AutoAddFeed(BaseFilter):
         # A command's media (``/upload`` with a photo attached) belongs to the command.
         if (message.caption or "").lstrip().startswith("/"):
             return False
-        from waifu.db.repositories import spawns as spawn_repo
+        from waifu.db.repo import spawns as spawn_repo
 
         if not await spawn_repo.group_switch(session, message.chat.id, "autoadd"):
             return False
@@ -609,7 +609,7 @@ async def autoadd(
             "<code>Name | Series | 3</code>, or just a file name — becomes a character.",
         )
         return
-    from waifu.db.repositories import spawns as spawn_repo
+    from waifu.db.repo import spawns as spawn_repo
 
     await spawn_repo.set_group_switch(session, message.chat.id, "autoadd", value=wanted == "on")
     await ctx.cache.invalidate("groups")
