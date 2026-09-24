@@ -172,9 +172,11 @@ class Settings(BaseSettings):
     no_jobs: bool = False
     allowed_updates: list[str] = Field(default_factory=list)  # empty -> derived from routers
 
-    # Local Bot API server: required for >5MB sends/receives and heavy traffic.
-    api_url: str = ""
-    api_base: str = ""
+    # Local Bot API server — only if you actually run one (tg-bot-api): needed for
+    # >5MB sends/receives and heavy traffic. Leave empty to use api.telegram.org.
+    # The standard layout (``/bot<token>/…`` + ``/file/bot<token>/…``) is derived
+    # from this one URL; the old API_URL/API_BASE names are no longer read.
+    bot_api_url: str = ""
 
     # --- Database (one — a file by default, Postgres when scaling) -----------
     #: A single SQLite file: the fastest startup (no server to connect to) and
@@ -427,6 +429,20 @@ class Settings(BaseSettings):
                 "DATABASE_URL must be sqlite+aiosqlite:///… (the default one-file "
                 "database) or postgresql+asyncpg://user:pass@host:5432/waifu."
             )
+        return raw
+
+    @field_validator("bot_api_url")
+    @classmethod
+    def _validate_bot_api_url(cls, raw: str) -> str:
+        """Optional: empty = the official api.telegram.org.
+
+        This is the *only* switch to local-server mode, so the name is explicit:
+        a generic variable like ``API_BASE`` used to catch unrelated env vars and
+        crash the deploy against a server nobody runs.
+        """
+        raw = (raw or "").strip()
+        if raw and not raw.startswith(("http://", "https://")):
+            raise ValueError("BOT_API_URL must be an http(s) URL, e.g. http://apiserver:80")
         return raw
 
     @field_validator("redis_url")

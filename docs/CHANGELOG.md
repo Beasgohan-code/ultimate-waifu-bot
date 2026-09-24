@@ -1,5 +1,22 @@
 # Changelog
 
+## 2026-09-24 — local Bot API server: one explicit switch, aiogram-3 wiring
+
+- The Render deploy crashed at startup: a generic ``API_BASE`` env var
+  (set for another tool) flipped the bot into local-Bot-API-server mode,
+  and the session was built with aiogram-2.x parameters
+  (``api_url=``/``api_base=``) that aiogram 3.31 no longer accepts —
+  ``BaseSession.__init__() got an unexpected keyword argument 'api_url'``.
+- Local-server mode is now opt-in through a single explicit variable:
+  ``BOT_API_URL`` (the server root, e.g. ``http://apiserver:80``). Left
+  empty, the bot uses the official api.telegram.org — and nothing else
+  in the environment can change that. ``API_URL``/``API_BASE`` are no
+  longer read.
+- The wiring is aiogram-3 correct (``TelegramAPIServer`` local mode), so
+  a real tg-bot-api deployment now works: the standard ``/bot`` +
+  ``/file`` layout is derived from the one URL, and a scheme-less value
+  is a clean validation error.
+
 ## 2026-09-24 — the whole repository layer in one file
 
 - `waifu/db/repositories/` (15 modules) is now `waifu/db/repo.py`. The database

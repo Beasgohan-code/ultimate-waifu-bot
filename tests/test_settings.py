@@ -187,3 +187,28 @@ def test_settings_error_explainer_names_the_variable(monkeypatch, capsys) -> Non
     assert "ALLOWED_MEDIA_HOSTS" in out
     assert "api.telegram.org" in out
     assert "comma-separated" in out
+
+
+def test_bot_api_url_is_off_by_default(monkeypatch) -> None:
+    """No local Bot API server exists in a normal deploy — the default must
+    stay the official api.telegram.org, and generic env vars (API_BASE,
+    API_URL, …) must not flip this switch anymore."""
+    monkeypatch.delenv("BOT_API_URL", raising=False)
+    settings = _settings()
+    assert settings.bot_api_url == ""
+
+
+def test_bot_api_url_env_form(monkeypatch) -> None:
+    monkeypatch.setenv("BOT_API_URL", "http://apiserver:80")
+    assert _settings().bot_api_url == "http://apiserver:80"
+
+
+def test_bot_api_url_requires_a_scheme() -> None:
+    """A typo here used to be a silent misconfiguration; now it is a clean
+    validation error, like every other URL in this file."""
+    from pydantic import ValidationError
+
+    with pytest.raises(ValidationError):
+        _settings(bot_api_url="apiserver:80")
+    with pytest.raises(ValidationError):
+        _settings(bot_api_url="ftp://nope")

@@ -10,6 +10,7 @@ from __future__ import annotations
 from aiogram import Bot
 from aiogram.client.default import DefaultBotProperties
 from aiogram.client.session.aiohttp import AiohttpSession
+from aiogram.client.telegram import TelegramAPIServer
 from aiogram.enums import ParseMode
 from aiogram.methods import DeleteWebhook
 from aiogram.types import LinkPreviewOptions
@@ -23,12 +24,9 @@ log = get_logger("core.bot")
 def build_session(settings: Settings) -> AiohttpSession:
     """Point at a local Bot API server when configured (large files, less latency)."""
     kwargs: dict[str, object] = {"timeout": 60}
-    if settings.api_url:
-        kwargs["api_url"] = settings.api_url
-    if settings.api_base:
-        kwargs["api_base"] = settings.api_base
-    if settings.api_url or settings.api_base:
-        log.info("using local Bot API server: %s", settings.api_url or settings.api_base)
+    if settings.bot_api_url:
+        kwargs["api"] = TelegramAPIServer.from_base(settings.bot_api_url, is_local=True)
+        log.info("using local Bot API server: %s", settings.bot_api_url.rstrip("/"))
     return AiohttpSession(**kwargs)  # type: ignore[arg-type]
 
 
