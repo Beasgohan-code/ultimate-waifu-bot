@@ -1,5 +1,27 @@
 # Changelog
 
+## 2026-09-24 — fresh installs ship playable (roster on by default)
+
+The "why is this bot dead" complaint, root cause #1: a fresh database had
+**zero characters**, so `/summon`, `/market` and the spawns were dead on
+arrival. The 177-character reference catalogue shipped in
+`waifu/data/characters.seed.json` but `SEED_CATALOGUE` defaulted off —
+while the reference bot its players gacha'd against was never an empty
+shell.
+
+- `seed_catalogue` now defaults **on**: first boot (the auto-migration
+  from 0125c4b) loads the catalogue alongside the 18-tier ladder, so a
+  redeploy plays out of the box. `waifu migrate` and `waifu seed
+  --catalogue` follow the same policy through the same code path
+  (`ensure_characters`, deduped on name+series — re-runs are lossless).
+- `SEED_CATALOGUE=0` keeps the old empty-roster behaviour (build with
+  `/upload` or `waifu import-legacy`); README, `.env.example` and the
+  doctor hint now describe the opt-out instead of the opt-in.
+- Tests pin both contracts: fresh migrations ship 177 characters,
+  `SEED_CATALOGUE=0` leaves the roster empty, and a fresh deploy boot
+  lands in a *playable* database. Local proof: fresh file → 8 migrations,
+  177 characters, 18 ladders; restart → 0 re-applied, roster intact.
+
 ## 2026-09-24 — the deploy now builds its own schema (no migrate step needed)
 
 The deploys of 2026-09-24 finally booted (settings, plugins, polling all
