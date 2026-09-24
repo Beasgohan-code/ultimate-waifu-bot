@@ -31,7 +31,14 @@ def fresh_deploy(tmp_path) -> Settings:
     )
 
 
-async def test_fresh_deploy_boots_into_a_current_schema(fresh_deploy) -> None:
+async def test_fresh_deploy_boots_into_a_playable_database(fresh_deploy, monkeypatch) -> None:
+    """Current schema *and* a roster to play with — the reference bot was never
+    an empty shell, and a fresh deploy must not be one either."""
+    from waifu.settings import get_settings
+
+    monkeypatch.setattr(
+        "waifu.settings._settings", get_settings().model_copy(update={"seed_catalogue": True})
+    )
     app = await build_app(fresh_deploy, with_bot=False, negotiate=False, with_plugins=False)
     try:
         tables = set(
@@ -39,6 +46,7 @@ async def test_fresh_deploy_boots_into_a_current_schema(fresh_deploy) -> None:
         )
         assert {"users", "characters", "schema_version"} <= tables
         assert (await app.ctx.db.query(text("SELECT COUNT(*) FROM schema_version")))[0] > 0
+        assert (await app.ctx.db.query(text("SELECT COUNT(*) FROM characters")))[0] > 100
     finally:
         await app.ctx.db.dispose()
 

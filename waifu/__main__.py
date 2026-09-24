@@ -44,12 +44,12 @@ def _parser() -> argparse.ArgumentParser:
     sub.add_parser("migrate", help="create/upgrade the schema (idempotent)")
 
     seedp = sub.add_parser(
-        "seed", help="load the rarity ladders (the roster is empty on purpose; see --catalogue)"
+        "seed", help="load the rarity ladders and, by default, the shipped catalogue"
     )
     seedp.add_argument(
         "--catalogue",
         action="store_true",
-        help="also insert the shipped catalogue (waifu/data/characters.seed.json)",
+        help="force the shipped catalogue even when SEED_CATALOGUE=0 (waifu/data/characters.seed.json)",
     )
     seedp.add_argument(
         "--force", action="store_true", help="re-apply catalogue rows by name+series"
@@ -304,9 +304,9 @@ async def _migrate(*, seed: bool = True, catalogue: bool | None = None, force: b
     ``no such table`` that this command exists to prevent. Re-running is safe — the
     migration list is recorded in ``schema_version`` and the seed is an upsert.
 
-    ``catalogue=None`` follows ``SEED_CATALOGUE`` (off). A bot that invents characters for
-    its players shows them a demo; the reference deployment had an empty ``characters``
-    table and filled it through ``/upload``, so that is the shipped behaviour here.
+    ``catalogue=None`` follows ``SEED_CATALOGUE`` (on by default: the bot ships playable,
+    with the shipped 177-character catalogue behind ``/summon`` and the spawns).
+    ``SEED_CATALOGUE=0`` starts empty for a roster built with ``/upload``.
     """
     from waifu.db import Database
     from waifu.db.migrations.runner import apply as apply_migrations
@@ -329,11 +329,11 @@ async def _migrate(*, seed: bool = True, catalogue: bool | None = None, force: b
 #: same text to the owner via ``/rosterstats`` and ``RosterEmpty``; three audiences, one
 #: list of doors, because "where do characters come from?" is the first question here.
 ROSTER_EMPTY_HINT = (
-    "roster  : empty (by design — this bot does not invent characters)\n"
-    "          add them from Telegram: reply to a photo/video/GIF with\n"
+    "roster  : empty — SEED_CATALOGUE=0, so the shipped catalogue was not loaded\n"
+    "          add characters from Telegram: reply to a photo/video/GIF with\n"
     "            /upload <Name> <Series> <1-18>\n"
     "          turn a group into a feed: /autoadd on\n"
-    "          or load the optional catalogue: python -m waifu seed --catalogue\n"
+    "          or set SEED_CATALOGUE=1 and re-run: python -m waifu seed --catalogue\n"
     "          or import your old database: python -m waifu import-legacy summon.db"
 )
 

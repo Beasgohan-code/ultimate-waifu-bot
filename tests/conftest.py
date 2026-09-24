@@ -56,10 +56,12 @@ def test_settings(tmp_path: object) -> Settings:
 async def db(tmp_path) -> AsyncIterator[Database]:
     """A fresh database: ladders from the migration, roster asked for explicitly.
 
-    ``characters=True`` is a *test* decision, not the product's: gameplay tests need a
-    pool to pull from, and the shipped catalogue is the cheapest real one. A fresh install
-    leaves the roster empty and fills it through ``/upload`` — the contract
-    :mod:`tests.test_catalogue_seed` pins down.
+    ``characters=True`` mirrors the product default (the shipped catalogue is the
+    install policy since 2026-09-24 — a fresh bot is playable) and is stated here
+    anyway because a fixture must not depend on the ambient environment: gameplay
+    tests need a pool to pull from, and the shipped catalogue is the cheapest real
+    one. The opt-out (``SEED_CATALOGUE=0``) is pinned in
+    :mod:`tests.test_uploads`.
     """
     settings = test_settings(tmp_path)
     database = Database.from_settings(settings)

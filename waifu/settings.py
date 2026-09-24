@@ -378,14 +378,13 @@ class Settings(BaseSettings):
     log_channel_id: int = 0
 
     # --- Roster ingestion -----------------------------------------------------
-    #: A fresh install ships an **empty** character database, exactly like the
-    #: reference deployment: its ``summon.db`` contained one row because *admins added
-    #: characters at runtime*, not because the code shipped a list. ``waifu migrate``
-    #: therefore writes the tier ladder and prices (configuration) and nothing else.
-    #: Set ``SEED_CATALOGUE=1`` to also load ``waifu/data/characters.seed.json`` — the
-    #: optional 177-entry catalogue — on migrate/seed, or use ``/upload``/``waifu seed
-    #: --catalogue``/``waifu import-legacy`` when you want the roster built your way.
-    seed_catalogue: bool = False
+    #: A fresh install ships **playable**: the shipped 177-character catalogue
+    #: (``waifu/data/characters.seed.json``) is loaded on first boot, so
+    #: ``/summon``, ``/market`` and the spawns have a roster to work from — the
+    #: way the reference bot was actually played. Set ``SEED_CATALOGUE=0`` to
+    #: start empty and build the roster with ``/upload`` (or
+    #: ``waifu import-legacy`` from an old database).
+    seed_catalogue: bool = True
     #: Where ``/upload`` parks the downloaded media until the admin chooses a web host
     #: (the reference bot hard-coded ``~/summon-bot/uploads``).
     upload_dir: Path = Path("./data/uploads")

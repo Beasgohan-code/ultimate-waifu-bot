@@ -39,14 +39,16 @@ async def _odds_defaults(conn: AsyncConnection) -> None:
 
 
 async def _personas(conn: AsyncConnection) -> None:
-    """Load the optional catalogue — *only* when the operator asked for one.
+    """Load the shipped catalogue on a fresh database (the default install policy).
 
-    A fresh database deliberately ends up with **no characters**. The reference bot did
-    the same: its shipped ``summon.db`` held exactly one row, because its roster was
-    never source code — admins typed it in, media first, with ``/upload``. Art and names
-    are content; the tier ladder and prices in ``0002`` are configuration, so those stay
-    mandatory while the catalogue is opt-in (``SEED_CATALOGUE=1``, ``waifu seed
-    --catalogue``, or ``waifu import-legacy`` for an existing deployment).
+    A bot with an empty roster is a bot with nothing to summon: the reference
+    deployment's players gacha'd against a full roster, so first boot loads the
+    shipped 177 characters (``waifu/data/characters.seed.json``) together with
+    the tier ladder. The ladder and prices in ``0002`` stay mandatory
+    configuration; the catalogue is the one content step — and it can be
+    switched off (``SEED_CATALOGUE=0``) for a roster built with ``/upload`` or
+    ``waifu import-legacy``. ``ensure_characters`` dedupes on name+series, so
+    re-running is always safe.
     """
     from waifu.settings import get_settings
 

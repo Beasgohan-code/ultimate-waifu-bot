@@ -13,11 +13,12 @@ comes from that bot (`config.py`, its 18-tier ladder and its economy constants),
 that switches over notices no price, no odds and no missing command; the audit of what it
 found is in the same file.
 
-**Nothing is invented for you.** A fresh install seeds the *configuration* — the 18-tier
-ladder with its published odds, claim rates and prices — and an **empty character table**,
-because that is how the reference deployment actually worked: its roster was not source
-code, it was what its admins uploaded, one message at a time. So characters come in through
-the bot itself:
+**It ships playable.** A fresh install seeds the *configuration* — the 18-tier
+ladder with its published odds, claim rates and prices — **and the 177-character
+reference catalogue** (`waifu/data/characters.seed.json`), so `/summon`, `/market`
+and the spawns have a roster from the first message: the way the reference bot was
+actually played. `SEED_CATALOGUE=0` starts from an empty roster instead, and
+characters can always be added through the bot itself:
 
 ```
 /upload Gojo jujutsu-kaisen 4      ← sent as a reply to a photo, video, GIF or live photo
@@ -64,7 +65,7 @@ Or without Docker:
 ```bash
 make install
 python -m waifu doctor        # config + schema + plugin-registration self-check
-python -m waifu migrate       # schema + tier ladders; the roster is yours to upload
+python -m waifu migrate       # schema + tier ladders + the shipped roster (SEED_CATALOGUE=0 for an empty one)
 python -m waifu import-legacy ./summon.db --dry-run   # optional: your old data
 make run
 ```
