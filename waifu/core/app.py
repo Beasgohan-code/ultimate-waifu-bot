@@ -159,50 +159,49 @@ async def run(*, token: str | None = None, settings: Settings | None = None) -> 
     if app.bot is None:
         raise RuntimeError("BOT_TOKEN is required to run the bot (waifu doctor explains)")
     log.info("starting %s", app.summary)
-
-    await delete_webhook_if_polling(app.bot, cfg)
-    await apply_identity(app.bot, cfg)
-    if cfg.set_command_menu:
-        # The menu is generated from the routers, so it can never list a command that
-        # does not exist or omit one that does.
-        from waifu.core.bot import set_command_menu
-        from waifu.core.dp import command_menu
-
-        await set_command_menu(app.bot, command_menu(), settings=cfg)
-    if cfg.set_menu_button:
-        await configure_menu_button(app.bot, cfg)
-    await app.startup()
-    # One resident loop for every timer in the bot (spawns, expiries, settlements).
-    # ``python -m waifu jobs --name <pass>`` runs the same code from cron instead, so a
-    # deployment can drop this loop entirely by setting ``WAIFU_NO_JOBS=1``.
-    runner: Any = None
-    if not cfg.no_jobs:
-        from waifu.core.jobs import JobRunner
-
-        runner = JobRunner(app.ctx)
-        await runner.start()
-
-    # The mini-app JSON API runs in this process (see waifu/api): same engine, same
-    # repositories, so the web view and the chat cannot disagree about a price.
-    api_runner: Any = None
-    if cfg.api_enabled:
-        from waifu.api import serve as serve_api
-
-        api_runner = await serve_api(app.ctx)
-
-    # Keep-alive health server (the Videl pattern): free-tier platforms sleep a
-    # *web* service that exposes no public endpoint, so polling mode gets a tiny
-    # one on $PORT (``/health`` + a deep ``/healthz``). Webhook mode already
-    # serves /healthz through its own app, so no second server there — and a
-    # taken port degrades to a warning, never to a crashed bot.
-    health_runner: Any = None
-    if cfg.mode == "polling" and cfg.health_enabled:
-        from waifu.core.health import resolve_port
-        from waifu.core.health import serve as serve_health
-
-        health_runner = await serve_health(app.ctx, cfg.health_host, resolve_port(cfg))
-
     try:
+        await delete_webhook_if_polling(app.bot, cfg)
+        await apply_identity(app.bot, cfg)
+        if cfg.set_command_menu:
+            # The menu is generated from the routers, so it can never list a command that
+            # does not exist or omit one that does.
+            from waifu.core.bot import set_command_menu
+            from waifu.core.dp import command_menu
+
+            await set_command_menu(app.bot, command_menu(), settings=cfg)
+        if cfg.set_menu_button:
+            await configure_menu_button(app.bot, cfg)
+        await app.startup()
+        # One resident loop for every timer in the bot (spawns, expiries, settlements).
+        # ``python -m waifu jobs --name <pass>`` runs the same code from cron instead, so a
+        # deployment can drop this loop entirely by setting ``WAIFU_NO_JOBS=1``.
+        runner: Any = None
+        if not cfg.no_jobs:
+            from waifu.core.jobs import JobRunner
+
+            runner = JobRunner(app.ctx)
+            await runner.start()
+
+        # The mini-app JSON API runs in this process (see waifu/api): same engine, same
+        # repositories, so the web view and the chat cannot disagree about a price.
+        api_runner: Any = None
+        if cfg.api_enabled:
+            from waifu.api import serve as serve_api
+
+            api_runner = await serve_api(app.ctx)
+
+        # Keep-alive health server (the Videl pattern): free-tier platforms sleep a
+        # *web* service that exposes no public endpoint, so polling mode gets a tiny
+        # one on $PORT (``/health`` + a deep ``/healthz``). Webhook mode already
+        # serves /healthz through its own app, so no second server there — and a
+        # taken port degrades to a warning, never to a crashed bot.
+        health_runner: Any = None
+        if cfg.mode == "polling" and cfg.health_enabled:
+            from waifu.core.health import resolve_port
+            from waifu.core.health import serve as serve_health
+
+            health_runner = await serve_health(app.ctx, cfg.health_host, resolve_port(cfg))
+
         await _serve(app, cfg)
     finally:
         if health_runner is not None:

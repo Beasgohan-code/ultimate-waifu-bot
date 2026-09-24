@@ -42,9 +42,9 @@ async def webapp(message: Message, ctx: AppContext, session: Any, access: Access
             "No mini-app URL is configured (WEBAPP_URL). /share and /collection work everywhere.",
         )
         return
-    from aiogram.types import WebAppButtonInfo
+    from aiogram.types import WebAppInfo
 
-    button = InlineKeyboardButton(text="🖼 open collection", web_app=WebAppButtonInfo(url=url))
+    button = InlineKeyboardButton(text="🖼 open collection", web_app=WebAppInfo(url=url))
     await card(
         message,
         ctx,

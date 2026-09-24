@@ -1,5 +1,35 @@
 # Changelog
 
+## 2026-09-24 — deploy-day crash sweep: lazy imports, probe payloads, clean shutdown
+
+The deploy now got past settings and plugin loading and died in the startup
+sequence. An audit of *every* aiogram import name against the installed
+aiogram 3.31 found two invented type names hiding in lazy imports (the kind
+no test ever executed) plus two payload bugs in the capability probe:
+
+- `set_command_menu` imported `BotCommandScopeChatAdmins` — a name aiogram
+  does not ship — and crashed every deploy at startup. Now uses the real
+  scopes (`BotCommandScopeDefault`, `…AllChatAdministrators`,
+  `…ChatAdministrators`).
+- `/webapp` imported `WebAppButtonInfo` (invented) for the mini-app button —
+  the same crash, one command later. Now `WebAppInfo`.
+- The capability probe built its payloads with aiogram-2.x shapes
+  (`RichMessage` where `InputRichMessage` is required, a string
+  `draft_id`): the ValidationError killed the *whole* probe at every real
+  deploy. Payloads are now built inside the try (one bad flag degrades,
+  nothing fatal) and use the correct 3.x shapes.
+- The probe's old/new-server test matched any "not found" — including
+  "chat not found", the *expected* answer to the fake probe chat — which
+  would have silently disabled rich messages on the official API. It now
+  matches "method not found" specifically.
+- `run()` now wraps the entire startup sequence (webhook cleanup, identity,
+  command menu, menu button, services, runners) in the same
+  try/finally as the serve loop, so a startup failure still closes the bot
+  session instead of leaking "Unclosed client session" noise at exit.
+- New standing test (`tests/test_aiogram_imports.py`): every aiogram import
+  in the codebase is resolved against the installed aiogram, so the next
+  invented name fails in CI, not on the platform.
+
 ## 2026-09-24 — local Bot API server: one explicit switch, aiogram-3 wiring
 
 - The Render deploy crashed at startup: a generic ``API_BASE`` env var
