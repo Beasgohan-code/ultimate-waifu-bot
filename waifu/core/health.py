@@ -108,6 +108,13 @@ async def serve(ctx: AppContext, host: str, port: int) -> web.AppRunner | None:
         log.warning(
             "keep-alive server could not bind %s:%s: %s — continuing without it", host, port, exc
         )
+        # …on a free-tier *web* service it is not a convenience: the platform
+        # scans for the advertised port and sleeps a process that never opens it.
+        log.error(
+            "no port is open — a web-service platform may sleep this process; "
+            "set HEALTH_PORT to a free port (or check what is already using %s)",
+            port,
+        )
         await runner.cleanup()
         return None
     log.info("keep-alive server on %s:%s (/, /health, /healthz)", host, port)

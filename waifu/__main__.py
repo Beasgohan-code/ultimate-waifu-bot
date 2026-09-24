@@ -214,7 +214,8 @@ async def _doctor(*, json_output: bool = False) -> int:
 
     from waifu.core.app import build_app
 
-    app = await build_app(with_bot=False, negotiate=False, with_plugins=False)
+    # migrate=False: the doctor reports pending schema work, it does not do it
+    app = await build_app(with_bot=False, negotiate=False, with_plugins=False, migrate=False)
     pending = ""
     try:
         from waifu.db.migrations.runner import plan

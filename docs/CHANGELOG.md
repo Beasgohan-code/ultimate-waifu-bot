@@ -1,5 +1,26 @@
 # Changelog
 
+## 2026-09-24 — the deploy now builds its own schema (no migrate step needed)
+
+The deploys of 2026-09-24 finally booted (settings, plugins, polling all
+up) and then failed *every* query — jobs, `/start`, `/help` — with
+`OperationalError: no such table: auctions / groups / kv / cooldowns`:
+the platform never runs `waifu migrate`, so the process started into an
+empty SQLite file.
+
+- `build_app` now applies the pending schema upgrades at startup
+  (idempotent, re-run safe, logged as `schema: applied …`). Every entry
+  point that owns the database — `waifu` (the bot), `waifu api`,
+  `waifu jobs` — self-heals; a fresh deploy needs **no deploy step**.
+- `waifu doctor` keeps its job: it *reports* pending migrations
+  (`migrate=False`) instead of silently doing them.
+- `tests/test_deploy_bootstrap.py` pins the failure mode: a fresh
+  database boots through `build_app` into a current schema, a reboot is
+  a no-op, and the doctor stays read-only.
+- A keep-alive bind failure now says so plainly (error level) with the
+  fix — a free-tier web service sleeps a process that never opens its
+  advertised port.
+
 ## 2026-09-24 — deploy-day crash sweep: lazy imports, probe payloads, clean shutdown
 
 The deploy now got past settings and plugin loading and died in the startup

@@ -96,6 +96,7 @@ async def build_app(
     with_bot: bool = True,
     negotiate: bool = True,
     with_plugins: bool = True,
+    migrate: bool = True,
 ) -> BuiltApp:
     """Construct the full application. Never starts it.
 
@@ -106,6 +107,20 @@ async def build_app(
     """
     cfg = settings or get_settings()
     db = Database.from_settings(cfg)
+    if migrate:
+        # A one-file deploy has no separate deploy step: the process that owns
+        # the database applies its pending schema upgrades at startup (idempotent,
+        # re-run safe). Without this, a fresh deploy boots into an empty file and
+        # every query dies with "no such table" (the Render deploys of 2026-09-24).
+        from waifu.db.migrations.runner import apply as apply_migrations
+
+        try:
+            applied = await apply_migrations(db.engine)
+        except Exception as exc:
+            log.error("schema upgrade failed: %s — run `waifu migrate`", exc)
+            raise
+        if applied:
+            log.info("schema: applied %s", ", ".join(applied))
     redis: Redis | None = None
     if cfg.redis_dsn:
         try:
