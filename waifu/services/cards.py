@@ -22,7 +22,7 @@ import anyio
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from waifu.db.models import Character
-from waifu.db.repositories import characters as char_repo
+from waifu.db.repo import characters as char_repo
 from waifu.enums import Rarity
 from waifu.services.base import Service
 from waifu.tg.media import rehost_into_chat
@@ -460,9 +460,9 @@ class ProfileCardMixin:
         who should not see a balance must not get it back from the Mini App or a cached
         PNG either: the masked value is what is hashed into the signature.
         """
-        from waifu.db.repositories import characters as char_repo
-        from waifu.db.repositories import progress as progress_repo
-        from waifu.db.repositories import users as user_repo
+        from waifu.db.repo import characters as char_repo
+        from waifu.db.repo import progress as progress_repo
+        from waifu.db.repo import users as user_repo
 
         bundle = await self.ctx.collection.profile(session, user_id)
         totals = await char_repo.totals(session)

@@ -1,13 +1,19 @@
 """Typed configuration — the only place environment variables are read.
 
-Two deliberate, opinionated constraints (per the "full PSQL + Redis" brief):
+Deliberate, opinionated constraints:
 
-* ``DATABASE_URL`` **must** be ``postgresql+asyncpg://…`` — no SQLite runtime path.
-* ``REDIS_URL`` **must** be set and reachable — FSM, cooldowns, queues, rate
-  limits and leaderboards live there.
+* **One database.** ``DATABASE_URL`` defaults to a single SQLite file
+  (``data/waifu.db``): nothing to install, the fastest possible startup, and
+  one file is all there is to back up. ``postgresql+asyncpg://…`` remains
+  supported for multi-worker scale-up — same code, migrations and backups.
+* **Redis is optional.** With ``REDIS_URL`` empty the bot runs on in-process
+  state (MemoryStorage FSM, DB-backed cooldowns/queues): correct for a single
+  worker, and the database stays the only source of truth — losing the
+  process loses speed, never data.
 
-Both are validated at startup with an actionable message, and the only escape
-hatch is ``WAIFU_TEST_MODE=1`` (used by the unit-test harness, never by a bot).
+Everything is validated at startup with an actionable message; ``BOT_TOKEN``
+is the only variable without a safe default, and ``WAIFU_TEST_MODE=1`` relaxes
+nothing at runtime (it only marks the unit-test harness).
 """
 
 from __future__ import annotations
@@ -15,10 +21,10 @@ from __future__ import annotations
 import json
 import os
 from pathlib import Path
-from typing import Literal, Self
+from typing import Annotated, Literal, Self
 
-from pydantic import BaseModel, Field, field_validator, model_validator
-from pydantic_settings import BaseSettings, SettingsConfigDict
+from pydantic import AliasChoices, BaseModel, Field, field_validator, model_validator
+from pydantic_settings import BaseSettings, NoDecode, SettingsConfigDict
 
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
 
@@ -90,6 +96,7 @@ class FeatureFlags(BaseModel):
     autoban: bool = True
     autospawn: bool = True
     fair_mode: bool = True  # commit/reveal verification buttons
+    dev_console: bool = False  # echo the failing handler's name on error messages
     # --- Brand new Bot API surfaces -----------------------------------------
     rich_messages: bool = True  # sendRichMessage + InputRichMessage w/ media
     draft_stream: bool = True  # sendMessageDraft (typewriter) for AI/broadcast
@@ -120,7 +127,11 @@ class Settings(BaseSettings):
     # --- Telegram -------------------------------------------------------------
     bot_token: str = ""
     owner_id: int = 0
-    admin_ids: list[int] = Field(default_factory=list)
+    # ``NoDecode`` matters: pydantic-settings JSON-decodes ``list[...]`` env values
+    # before any validator runs, so ``ADMIN_IDS=1,2,3`` (the format .env.example
+    # documents) used to crash the whole deploy with "error parsing value for
+    # field". Raw strings reach the comma-splitting validator instead.
+    admin_ids: Annotated[list[int], NoDecode] = Field(default_factory=list)
     bot_username: str = "UltimateWaifuBot"
     #: Display name in headers and /start. Not the Telegram-side name (that is set with
     #: ``setMyName`` in :func:`waifu.core.bot.apply_identity`); this is what *we* print.
@@ -140,6 +151,15 @@ class Settings(BaseSettings):
     webhook_certificate: str = ""
     webhook_max_connections: int = 40
     webhook_drop_pending_updates: bool = False
+
+    # --- Keep-alive health server (free-tier platforms: Render/Koyeb/Railway) --
+    # A tiny HTTP server (``/``, ``/health``, ``/healthz``) so a free *web* service
+    # never sleeps for idleness and uptime monitors have something to ping — the
+    # same pattern Videl ships. ``health_port=0`` means "use the platform's $PORT
+    # (or 8080)"; the field also reads PORT via its alias, so it just works there.
+    health_enabled: bool = True
+    health_port: int = Field(default=0, validation_alias=AliasChoices("HEALTH_PORT", "PORT"))
+    health_host: str = "0.0.0.0"
     #: Drop updates queued while the bot was offline (polling). ``False`` is the
     #: default because replaying an hour of /daily presses is worse than missing them.
     drop_pending_updates: bool = False
@@ -152,19 +172,26 @@ class Settings(BaseSettings):
     no_jobs: bool = False
     allowed_updates: list[str] = Field(default_factory=list)  # empty -> derived from routers
 
-    # Local Bot API server: required for >5MB sends/receives and heavy traffic.
-    api_url: str = ""
-    api_base: str = ""
+    # Local Bot API server — only if you actually run one (tg-bot-api): needed for
+    # >5MB sends/receives and heavy traffic. Leave empty to use api.telegram.org.
+    # The standard layout (``/bot<token>/…`` + ``/file/bot<token>/…``) is derived
+    # from this one URL; the old API_URL/API_BASE names are no longer read.
+    bot_api_url: str = ""
 
-    # --- Postgres (required) --------------------------------------------------
-    database_url: str = ""
+    # --- Database (one — a file by default, Postgres when scaling) -----------
+    #: A single SQLite file: the fastest startup (no server to connect to) and
+    #: the only thing ``waifu backup`` has to copy. Point it at a *persistent*
+    #: volume on platforms with an ephemeral project dir (Render:
+    #: ``sqlite+aiosqlite:////opt/render/project/data/waifu.db``) — a database
+    #: file inside the checkout is wiped on every deploy.
+    database_url: str = "sqlite+aiosqlite:///data/waifu.db"
     db_echo: bool = False
     db_pool_size: int = 10
     db_max_overflow: int = 20
     db_statement_timeout_ms: int = 8000
     legacy_db_path: str = ""
 
-    # --- Redis (required) -----------------------------------------------------
+    # --- Redis (optional — hot state only, never the source of truth) ---------
     redis_url: str = ""
     redis_max_connections: int = 64
     redis_key_prefix: str = "uwb"
@@ -229,11 +256,17 @@ class Settings(BaseSettings):
     guess_timeout_seconds: int = 30
     guess_reward_coins: int = 20
     #: ``REACTIONS`` — the vote pool for /nguess and raffles.
-    guess_reactions: list[str] = Field(
+    guess_reactions: Annotated[list[str], NoDecode] = Field(
         default_factory=lambda: ["🔥", "🎉", "👍", "💯", "⚡", "🥳", "👀", "✨"]
     )
     #: ``SPAM_LIMIT``: messages per minute before the group autoban fires.
     spam_limit_per_minute: int = 20
+    #: Per-user / per-chat command token buckets (``ThrottleMiddleware``). Summon-bot had no
+    #: throttling of its own and rode Telegram's global 30 req/s, which is one busy server
+    #: away from a 429 storm. These numbers sit comfortably under that ceiling.
+    rate_limit_per_user: int = 30
+    rate_limit_per_chat: int = 60
+    rate_limit_window: int = 60
     #: Auto-ban groups whose owner enabled it, after N strikes in the window.
     spam_auto_ban_strikes: int = 3
     #: ``commands_auction.py`` clamped a listing to 5-180 minutes with a 30-minute default and
@@ -257,7 +290,7 @@ class Settings(BaseSettings):
 
     #: Daily streak multiplier per consecutive day (last value repeats). Env form is
     #: JSON: ``ECONOMY_STREAK_MULTIPLIER_CURVE=[1,1.1,1.2,1.3,1.4,1.5,2]``.
-    streak_multiplier_curve: list[float] = Field(
+    streak_multiplier_curve: Annotated[list[float], NoDecode] = Field(
         default_factory=lambda: [1.0, 1.1, 1.2, 1.3, 1.4, 1.5, 2.0]
     )
 
@@ -286,7 +319,7 @@ class Settings(BaseSettings):
     card_width: int = 900
     media_base_url: str = ""
     font_path: str = ""
-    allowed_media_hosts: list[str] = Field(
+    allowed_media_hosts: Annotated[list[str], NoDecode] = Field(
         default_factory=lambda: ["api.telegram.org", "files.catbox.moe", "i.ibb.co", "catbox.moe"]
     )
     enable_outbound_media: bool = True
@@ -308,6 +341,12 @@ class Settings(BaseSettings):
     log_level: str = "INFO"
     log_json: bool = False
     data_dir: Path = Path("./data")
+    #: Where ``waifu backup``, the daily jobs pass and ``/backup`` write their
+    #: JSON snapshots of the whole database.
+    backup_dir: Path = Path("./backups")
+    #: How many backups to keep (the oldest beyond this are pruned after each
+    #: backup) — enough history to "go back 10 days" without filling a disk.
+    backup_keep: int = 10
     support_chat_id: int = 0
     #: Private chat where generated art is uploaded so it becomes a permanent
     #: file_id (``/archiveart`` uses this; leave 0 to disable archiving).
@@ -339,14 +378,13 @@ class Settings(BaseSettings):
     log_channel_id: int = 0
 
     # --- Roster ingestion -----------------------------------------------------
-    #: A fresh install ships an **empty** character database, exactly like the
-    #: reference deployment: its ``summon.db`` contained one row because *admins added
-    #: characters at runtime*, not because the code shipped a list. ``waifu migrate``
-    #: therefore writes the tier ladder and prices (configuration) and nothing else.
-    #: Set ``SEED_CATALOGUE=1`` to also load ``waifu/data/characters.seed.json`` — the
-    #: optional 177-entry catalogue — on migrate/seed, or use ``/upload``/``waifu seed
-    #: --catalogue``/``waifu import-legacy`` when you want the roster built your way.
-    seed_catalogue: bool = False
+    #: A fresh install ships **playable**: the shipped 177-character catalogue
+    #: (``waifu/data/characters.seed.json``) is loaded on first boot, so
+    #: ``/summon``, ``/market`` and the spawns have a roster to work from — the
+    #: way the reference bot was actually played. Set ``SEED_CATALOGUE=0`` to
+    #: start empty and build the roster with ``/upload`` (or
+    #: ``waifu import-legacy`` from an old database).
+    seed_catalogue: bool = True
     #: Where ``/upload`` parks the downloaded media until the admin chooses a web host
     #: (the reference bot hard-coded ``~/summon-bot/uploads``).
     upload_dir: Path = Path("./data/uploads")
@@ -371,36 +409,80 @@ class Settings(BaseSettings):
     @field_validator("database_url")
     @classmethod
     def _validate_db(cls, raw: str) -> str:
+        """One database, two backends.
+
+        SQLite (the default) is a first-class runtime database — a single
+        file holding the whole source of truth. Postgres is the scale-up
+        path for multi-worker deployments. Anything else is a typo.
+        """
         raw = (raw or "").strip()
-        if raw.startswith("sqlite") and not in_test_mode():
+        if raw.startswith(("sqlite+aiosqlite://", "postgresql+asyncpg://")):
+            return raw
+        if raw.startswith("sqlite"):
             raise ValueError(
-                "SQLite is not a supported runtime database. Set DATABASE_URL to "
-                "postgresql+asyncpg://user:pass@host:5432/waifu (see docker-compose.yml)."
+                "DATABASE_URL must use the async driver: sqlite+aiosqlite:///… "
+                "(plain sqlite:// has no async support) or postgresql+asyncpg://…"
             )
-        if raw and not raw.startswith(("postgresql+asyncpg://", "sqlite+aiosqlite://")):
-            raise ValueError("DATABASE_URL must use the postgresql+asyncpg:// scheme.")
+        if raw:
+            raise ValueError(
+                "DATABASE_URL must be sqlite+aiosqlite:///… (the default one-file "
+                "database) or postgresql+asyncpg://user:pass@host:5432/waifu."
+            )
+        return raw
+
+    @field_validator("bot_api_url")
+    @classmethod
+    def _validate_bot_api_url(cls, raw: str) -> str:
+        """Optional: empty = the official api.telegram.org.
+
+        This is the *only* switch to local-server mode, so the name is explicit:
+        a generic variable like ``API_BASE`` used to catch unrelated env vars and
+        crash the deploy against a server nobody runs.
+        """
+        raw = (raw or "").strip()
+        if raw and not raw.startswith(("http://", "https://")):
+            raise ValueError("BOT_API_URL must be an http(s) URL, e.g. http://apiserver:80")
         return raw
 
     @field_validator("redis_url")
     @classmethod
     def _validate_redis(cls, raw: str) -> str:
+        """Optional: empty = in-process state (single worker).
+
+        Nothing lives *only* in Redis — cooldowns, queues and FSM states have
+        database-backed or in-process fallbacks — so an empty value is a
+        valid deployment, not a broken one.
+        """
         raw = (raw or "").strip()
-        if not raw and not in_test_mode():
-            raise ValueError(
-                "REDIS_URL is required (FSM storage, cooldowns, spawn queue, rate limits). "
-                "Example: redis://localhost:6379/0"
-            )
         if raw and not raw.startswith(("redis://", "rediss://", "unix://")):
             raise ValueError("REDIS_URL must start with redis://, rediss:// or unix://")
         return raw
 
-    @field_validator("admin_ids", "allowed_media_hosts", mode="before")
+    @field_validator(
+        "admin_ids",
+        "allowed_media_hosts",
+        "guess_reactions",
+        "streak_multiplier_curve",
+        mode="before",
+    )
     @classmethod
     def _parse_lists(cls, raw: object) -> object:
-        if raw in (None, ""):
+        """Env values arrive as raw strings (NoDecode) — accept both the
+        comma-separated form documented in .env.example and a JSON array, so
+        either habit keeps working."""
+        if raw is None:
             return []
         if isinstance(raw, str):
-            return [p for part in (raw.split(","),) for p in [x.strip() for x in part] if p]
+            text = raw.strip()
+            if not text:
+                return []
+            try:
+                parsed = json.loads(text)
+                if isinstance(parsed, list):
+                    return parsed
+            except (json.JSONDecodeError, ValueError):
+                pass  # not JSON — the documented comma-separated form
+            return [part.strip() for part in text.split(",") if part.strip()]
         return raw
 
     @field_validator("admin_ids", mode="after")
@@ -415,11 +497,12 @@ class Settings(BaseSettings):
                 raise ValueError("MODE=webhook requires WEBHOOK_SECRET (blocks forged updates).")
             if not self.webhook_url.startswith("https://"):
                 raise ValueError("WEBHOOK_URL must be an https:// URL.")
-        if self.sqlite_path is not None and not in_test_mode():  # defensive
-            raise ValueError("SQLite runtime is not supported.")
         self.data_dir = Path(self.data_dir)
         if not self.data_dir.is_absolute():
             self.data_dir = PROJECT_ROOT / self.data_dir
+        self.backup_dir = Path(self.backup_dir)
+        if not self.backup_dir.is_absolute():
+            self.backup_dir = PROJECT_ROOT / self.backup_dir
         return self
 
     # --------------------------------------------------------------- accessors
@@ -484,23 +567,33 @@ class Settings(BaseSettings):
     def is_admin(self, user_id: int) -> bool:
         return user_id in self.owner_ids
 
+    def is_owner(self, user_id: int) -> bool:
+        """Strict owner check (``is_admin`` is true for admins *and* the owner).
+
+        ``core.access.resolve`` needs the two apart: the owner row gets every
+        permission, admins get everything except the owner-only set.
+        """
+        return user_id != 0 and user_id == self.owner_id
+
     def key(self, *parts: str | int) -> str:
         """Namespaced Redis key: ``uwb:spawn:queue`` etc."""
         return ":".join((self.redis_key_prefix, *(str(p) for p in parts)))
 
     def validate_runtime(self) -> list[str]:
-        """Startup checklist; each entry is a human-readable problem. Empty = good."""
+        """Startup checklist; each entry is a human-readable problem. Empty = good.
+
+        Only the token can actually block a deploy: the database defaults to
+        one file and Redis is optional, so a fresh checkout starts with a
+        single variable and degrades gracefully instead of dying on setup.
+        """
         problems: list[str] = []
         if not self.bot_token or self.bot_token == "PUT_YOUR_BOT_TOKEN_HERE":
             problems.append("BOT_TOKEN is missing — create one with @BotFather.")
         if self.owner_id <= 0:
-            problems.append("OWNER_ID must be your numeric Telegram id (use @userinfobot).")
-        if not self.database_url:
-            problems.append("DATABASE_URL is missing (postgresql+asyncpg://…).")
-        elif not self.is_postgres:
-            problems.append("DATABASE_URL must be postgresql+asyncpg://…; SQLite is test-only.")
-        if not self.redis_url:
-            problems.append("REDIS_URL is missing (redis://localhost:6379/0).")
+            problems.append(
+                "OWNER_ID is not set — owner commands (/backup, /doctor, /setlogchannel, …) "
+                "stay locked (use @userinfobot for your numeric id)."
+            )
         if self.mode == "webhook" and not self.webhook_secret:
             problems.append("WEBHOOK_SECRET is required in webhook mode.")
         if not self.coin_packs and self.features.stars:

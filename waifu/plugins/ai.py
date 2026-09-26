@@ -100,7 +100,7 @@ async def ai(
 async def _pick_character(
     session: Any, ctx: AppContext, message: Message, args: Args
 ) -> tuple[Any, str]:
-    from waifu.db.repositories import users as user_repo
+    from waifu.db.repo import users as user_repo
 
     head = args.first
     character = None
@@ -144,7 +144,7 @@ async def charai(
     except NotFound:
         await text(message, ctx, f"No character called “{name.strip()[:40]}”.")
         return
-    from waifu.db.repositories import characters as char_repo
+    from waifu.db.repo import characters as char_repo
 
     await char_repo.create_or_update(
         session, name=character.name, anime=character.anime or "", persona=persona.strip()[:1500]

@@ -479,7 +479,7 @@ async def claimlist(message: Message, ctx: AppContext, session: Any) -> None:
     Worth its own command because the two ladders differ: a tier can be rare in the gacha
     and still be the best free claim today, which is the trade players actually plan around.
     """
-    from waifu.db.repositories import characters as char_repo
+    from waifu.db.repo import characters as char_repo
 
     claims = dict(await char_repo.claim_chances(session) or [])
     rows = [["tier", "claim weight", "base price"]]

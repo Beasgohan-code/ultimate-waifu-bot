@@ -12,10 +12,10 @@ import pytest
 from sqlalchemy import update
 
 from waifu.db.models import InventoryItem
-from waifu.db.repositories import characters as char_repo
-from waifu.db.repositories import collection as collection_repo
-from waifu.db.repositories import economy as ledger
-from waifu.db.repositories import items as items_repo
+from waifu.db.repo import characters as char_repo
+from waifu.db.repo import collection as collection_repo
+from waifu.db.repo import economy as ledger
+from waifu.db.repo import items as items_repo
 from waifu.errors import AlreadyClaimed, Locked, NotFound, WaifuError
 from waifu.services.economy import steal_slice
 from waifu.services.gacha import GachaService

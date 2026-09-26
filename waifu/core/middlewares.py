@@ -55,6 +55,24 @@ class ContextMiddleware(BaseMiddleware):
         if tg_user is None or self.redis is None:
             return access.user
         fresh = await self.redis.claim_once(("seen", tg_user.id), 3600, value="1")
+        if fresh and access.user is None:
+            # First contact from this account — the owner's log channel is where
+            # "a new player walked in" belongs (id + name + @username, escaped).
+            label = tg_user.first_name or tg_user.username or "unknown"
+            handle = f" (@{tg_user.username})" if tg_user.username else ""
+            from waifu.tg.rich import rich_log
+
+            await self.ctx.notify(
+                f"🆕 new player: {label}{handle} · id {tg_user.id}",
+                silent=True,
+                rich=rich_log("🆕 new player", f"{label}{handle}", detail=f"id {tg_user.id}"),
+            )
+            # A reaction on the newcomer's own message is the welcome: it shows
+            # in their history without adding a fifth bot message to the group.
+            if self.ctx.caps.allow("reactions") and isinstance(event, Message):
+                from waifu.tg.interactions import react
+
+                await react(self.ctx.bot, event, "heart")
         if not fresh and access.user is not None:
             return access.user
         if (
@@ -76,9 +94,9 @@ class ContextMiddleware(BaseMiddleware):
         single atomic UPDATE … RETURNING, so 200 members talking at once cannot
         lose counts or double-fire a spawn.
         """
-        from waifu.db.repositories.spawns import bump_message_count
+        from waifu.db.repo import spawns
 
-        _count, limit, triggered = await bump_message_count(
+        _count, limit, triggered = await spawns.bump_message_count(
             session, chat_id, spawn_limit_default=self.settings.spawn_default_limit
         )
         user.last_seen_at = now_utc()
@@ -247,7 +265,15 @@ class LoggingMiddleware(BaseMiddleware):
 def _locate(
     event: TelegramObject, update: Update | None
 ) -> tuple[int | None, int | None, str | None]:
-    """Return ``(chat_id, user_id, chat_type)`` for any supported update."""
+    """Return ``(chat_id, user_id, chat_type)`` for any supported update.
+
+    Never raises on unknown update shapes: aiogram 3.31 has no
+    ``Update.effective_chat`` / ``effective_user``, and the fallback has to
+    duck-type the typed payload (``subscription.user``,
+    ``purchased_paid_media.from_user`` …) — see :mod:`waifu.utils.chats`.
+    """
+    from waifu.utils.chats import effective_chat, effective_user
+
     if isinstance(event, CallbackQuery):
         chat = event.message.chat if event.message and event.message.chat else None
         return (
@@ -262,13 +288,8 @@ def _locate(
             event.from_user.id if event.from_user else None,
             chat.type if chat else None,
         )
-    chat = getattr(event, "chat", None)
-    user = getattr(event, "from_user", None)
-    if chat is None and update is not None:
-        resolved = update.effective_chat
-        chat = resolved
-    if user is None and update is not None:
-        user = update.effective_user
+    chat = effective_chat(update if update is not None else event)
+    user = effective_user(update if update is not None else event)
     return (
         getattr(chat, "id", None),
         getattr(user, "id", None),
@@ -299,5 +320,5 @@ def install_middlewares(dp, ctx: AppContext, settings: Settings) -> None:
     dp.update.outer_middleware(ContextMiddleware(ctx, settings))
     dp.update.outer_middleware(ThrottleMiddleware(ctx, settings))
     dp.update.outer_middleware(ReplayGuardMiddleware(ctx))
-    dp.update.outer_middleware(FeatureGateMiddleware(ctx))
+    dp.update.outer_middleware(FeatureGateMiddleware())
     dp.update.outer_middleware(LoggingMiddleware(ctx))

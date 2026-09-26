@@ -3,7 +3,7 @@
 Design notes worth stealing:
 
 * every mutation goes through :meth:`EconomyService.apply`, which wraps
-  ``repositories.economy.credit/debit`` and *always* writes the ledger row in the
+  ``repo.economy.credit/debit`` and *always* writes the ledger row in the
   same transaction — the reference bot's ``/givemoney`` edited the column directly
   and left no trace;
 * repeat-safety is by ``idempotency_key`` (unique index), so a Telegram retry or a
@@ -21,11 +21,11 @@ from typing import Any
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from waifu.db.models import Character
-from waifu.db.repositories import collection as collection_repo
-from waifu.db.repositories import economy as ledger
-from waifu.db.repositories import items as items_repo
-from waifu.db.repositories import progress as progress_repo
-from waifu.db.repositories import users as users_repo
+from waifu.db.repo import collection as collection_repo
+from waifu.db.repo import economy as ledger
+from waifu.db.repo import items as items_repo
+from waifu.db.repo import progress as progress_repo
+from waifu.db.repo import users as users_repo
 from waifu.enums import LedgerReason, Rarity
 from waifu.errors import AlreadyClaimed, CooldownActive, NotFound, WaifuError
 from waifu.services.base import Service
@@ -222,7 +222,7 @@ class EconomyService(Service):
     ) -> DailyResult:
         """``/daily`` — streak-multiplied payout, jackpot roll, first freeze grant.
 
-        Streak maths live in :mod:`waifu.db.repositories.progress` so the same
+        Streak maths live in :mod:`waifu.db.repo.progress` so the same
         curve applies to /work-streaks and the reminder job.
         """
         day = self.local_day(utc_offset_hours)

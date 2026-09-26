@@ -402,7 +402,7 @@ async def ban(
 # Design notes worth keeping:
 #
 # * no table, no migration. A pending join is a 15-minute, three-try state, so it lives in
-#   :class:`~waifu.db.cache.Cache` (Redis when configured, TTL map otherwise) keyed by
+#   :class:`~waifu.db.state.Cache` (Redis when configured, TTL map otherwise) keyed by
 #   ``(chat_id, user_id)`` — which is also what Telegram uses to identify a join request.
 # * an empty roster must never lock a group: with fewer than four characters the gate answers
 #   ``approve`` immediately, so a fresh install can still turn the feature on.
@@ -662,7 +662,7 @@ async def _gate_question(ctx: AppContext, session: Any, *, chat_id: int) -> dict
     """
     import secrets
 
-    from waifu.db.repositories import characters as char_repo
+    from waifu.db.repo import characters as char_repo
 
     async def _load() -> dict[str, Any] | None:
         totals = await char_repo.totals(session)

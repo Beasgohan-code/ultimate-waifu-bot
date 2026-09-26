@@ -20,18 +20,11 @@ from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any
 
 from waifu.core.context import AppContext
-from waifu.db.redis_client import Redis
+from waifu.db.state import Redis
 from waifu.settings import Settings
 
 if TYPE_CHECKING:  # pragma: no cover
-    pass
-
-
-def _escape(text: str) -> str:
-    """Minimal HTML escaping so a log line cannot markup-flood the channel."""
-    from waifu.utils.text import esc
-
-    return esc(text)
+    from waifu.db.models import Character
 
 
 @dataclass(slots=True)
@@ -94,20 +87,52 @@ class Service:
         )
         return result.ok
 
-    async def log_line(self, text: str, *, silent: bool = False, as_html: bool = False) -> None:
+    async def deliver_character_dm(
+        self,
+        user_id: int,
+        character: Character,
+        html: str,
+        *,
+        silent: bool = True,
+        rich: Any | None = None,
+    ) -> bool:
+        """DM a character to a player *with its art* (gift receipts, paid unlocks).
+
+        The image falls back ``photo_file_id`` → ``image_url``; if Telegram cannot
+        send the media (a dead hotlink, a blocked file id) the message is retried
+        as text so the player still gets the notification. Returns ``True`` when
+        anything reached the player. Never raises: a gift that fails to picture
+        is a degraded receipt, not an exception in the middle of a transfer.
+        """
+        if self.bot is None or character is None:
+            return False
+        from waifu.tg.media import resolve_media
+        from waifu.tg.notify import SendOutcome, safe_send
+
+        photo = resolve_media(character.photo_file_id or character.image_url)
+        rich = rich if self.ctx.caps.rich_messages else None
+        # ``safe_send`` tries the rich layout first (when given one) and falls
+        # back to photo + this HTML caption, so the player always gets the DM.
+        result = await safe_send(
+            self.bot, user_id, html, photo=photo, rich=rich, disable_notification=silent
+        )
+        if result.outcome is SendOutcome.ERROR and (photo is not None or rich is not None):
+            result = await safe_send(self.bot, user_id, html, disable_notification=silent)
+        return result.ok
+
+    async def log_line(
+        self, text: str, *, silent: bool = False, as_html: bool = False, rich: Any | None = None
+    ) -> None:
         """Copy an event into the log channel — for *staff*, not for players.
 
         Never fed user-authored text (a group name or a reason string is
         escaped by the caller); that is what keeps the channel unspoofable.
+        Delegates to :meth:`AppContext.notify` so every send — service or
+        handler — is counted in ``ctx.log_stats``; ``rich`` is an optional
+        :class:`InputRichMessage` (see :func:`waifu.tg.rich.rich_log`) that
+        renders natively on servers with the feature.
         """
-        chat_id = self.settings.log_channel_id
-        if not chat_id:
-            return
-        from waifu.tg.notify import safe_send
-
-        await safe_send(
-            self.bot, chat_id, text if as_html else _escape(text), disable_notification=silent
-        )
+        await self.ctx.notify(text, silent=silent, html=as_html, rich=rich)
 
     async def broadcast_channel(self, html: str) -> None:
         await self.log_line(html, as_html=True)

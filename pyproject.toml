@@ -86,7 +86,6 @@ ignore = [
 # dataclass fields). ``session: AsyncSession`` on every method is noise the reader already
 # knows from the surrounding file, and it is on the list to add back module by module.
 "waifu/core/*" = ["ANN001", "ANN201", "PLW0603"]
-"waifu/db/repositories/*" = ["ANN001", "ANN201"]
 "waifu/db/*" = ["ANN001", "ANN201"]
 "waifu/services/*" = ["ANN001", "ANN201", "PLR0911", "PLR0912", "PLR0915", "SIM102", "PERF102", "C400"]
 "waifu/utils/*" = ["ANN", "DTZ", "S110"]

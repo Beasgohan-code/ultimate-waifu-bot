@@ -20,6 +20,7 @@ from aiogram.fsm.storage.redis import DefaultKeyBuilder, RedisStorage
 from aiogram.types import ErrorEvent
 
 from waifu.core.context import AppContext
+from waifu.core.middlewares import install_middlewares
 from waifu.logging import get_logger
 from waifu.settings import Settings
 from waifu.utils.chats import is_group
@@ -51,6 +52,7 @@ PLUGIN_ROUTERS: tuple[str, ...] = (
     "waifu.plugins.ai",  # setai / ai / charai / chat / ask
     "waifu.plugins.inline",  # @bot inline search: the roster and your harem, in any chat
     "waifu.plugins.hstats",  # h-stats / h-top / h-usage
+    "waifu.plugins.requests",  # /request <Name> <Series> — the polite door to the roster
     "waifu.plugins.webapp",  # mini-app data API + share
 )
 
@@ -87,11 +89,12 @@ def build_storage(settings: Settings) -> BaseStorage:
     treats Redis as mandatory unless ``WAIFU_TEST_MODE`` is on.
     """
     if settings.redis_dsn:
+        # ``prefix`` (not ``global_prefix`` — that keyword does not exist on
+        # aiogram 3.31's DefaultKeyBuilder and crashed every real deploy at
+        # startup, which no test caught because tests run on MemoryStorage).
         return RedisStorage.from_url(
             settings.redis_dsn,
-            key_builder=DefaultKeyBuilder(
-                with_bot_id=True, with_destiny=True, global_prefix="waifu:fsm:"
-            ),
+            key_builder=DefaultKeyBuilder(prefix="waifu:fsm", with_bot_id=True, with_destiny=True),
         )
     log.warning("REDIS_URL not set — MemoryStorage only supports a single worker")
     return MemoryStorage()
@@ -100,11 +103,32 @@ def build_storage(settings: Settings) -> BaseStorage:
 def build_dispatcher(settings: Settings, ctx: AppContext) -> tuple[Dispatcher, RegistrationReport]:
     report = RegistrationReport()
     dp = Dispatcher(storage=build_storage(settings), ctx=ctx, settings=settings)
+    # The middlewares are what inject ``session`` and ``access`` into every
+    # handler; without this line every command dies with "missing argument" on
+    # the first update, so it lives in the one place the dispatcher is built.
+    install_middlewares(dp, ctx, settings)
     # FSM strategy USER_IN_CHAT is the default; explicit because a wrong choice
     # here is the classic "two users in one group hijack each other's menus" bug.
     register_plugins(dp, ctx, report)
     dp.errors.register(on_error)
     return dp, report
+
+
+def plugin_report() -> RegistrationReport:
+    """Import-check every plugin **without attaching anything to a dispatcher**.
+
+    ``register_plugins`` attaches the module-level routers permanently (aiogram
+    refuses to attach a router twice), so a diagnostic that only wants the
+    report — ``waifu doctor`` — must not go through it: in a process that
+    later builds a real dispatcher (the test suite shares one), the attached
+    routers would make that build raise.
+    """
+    report = RegistrationReport()
+    for path in PLUGIN_ROUTERS:
+        router = _load(path, report)
+        if router is not None:
+            report.loaded.append(path)
+    return report
 
 
 def register_plugins(
@@ -160,10 +184,18 @@ async def on_error(event: ErrorEvent, ctx: AppContext, settings: Settings) -> No
     """
     from aiogram.exceptions import TelegramAPIError, TelegramForbiddenError
 
+    from waifu.utils.chats import effective_chat, effective_user
+
     exc = event.exception
-    handler = getattr(event.handler, "__qualname__", "?")
-    chat = event.update.effective_chat if event.update else None
-    user = event.update.from_user if event.update else None
+    # aiogram 3.31's ErrorEvent carries only (update, exception) — the handler
+    # reference from older versions is gone, and the error handler itself must
+    # never raise, so every access here is defensive.
+    handler_obj = getattr(event, "handler", None)
+    handler = getattr(handler_obj, "__qualname__", None) or type(exc).__name__
+    # aiogram 3.31's Update exposes no effective_chat / from_user, and the error
+    # handler must never raise on an unknown update shape — duck-type instead.
+    chat = effective_chat(event.update) if event.update else None
+    user = effective_user(event.update) if event.update else None
 
     if isinstance(exc, TelegramForbiddenError):
         # Bot kicked from the group or DM closed: normal lifecycle, not a bug.

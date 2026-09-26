@@ -8,7 +8,7 @@ slower while every number stays correct. The bug this file caught is documented 
 
 from __future__ import annotations
 
-from waifu.db.cache import Cache
+from waifu.db.state import Cache
 
 
 async def test_a_second_read_hits_without_calling_the_loader() -> None:

@@ -47,6 +47,10 @@ INTERVALS: dict[str, int] = {
     "raffles": 30,
     "nightly": 3600,
     "integrity": 900,
+    "broadcasts": 60,  # /broadcast at … — a minute granularity is plenty for announcements
+    "streaks": 3600,  # at-risk streak warnings (once per player per day)
+    "digest": 604800,  # weekly — the pass itself re-checks the clock (Sunday)
+    "backup": 86400,  # daily snapshot of the whole database (BACKUP_KEEP kept)
 }
 
 
@@ -158,7 +162,12 @@ async def _raffles(ctx: AppContext, *, limit: int) -> dict[str, int]:
 async def _nightly(ctx: AppContext, *, limit: int) -> dict[str, int]:
     async with ctx.db.tx() as session:
         broken = await ctx.progress.reset_streaks(session)
-    return {"streaks_reset": int(broken or 0)}
+        # Telegram renews subscriptions silently; this is where a lapsed period
+        # becomes an extended one (and a line in the owner's log channel).
+        renewed = (
+            await ctx.premium.renew_due_subscriptions(session) if ctx.premium is not None else 0
+        )
+    return {"streaks_reset": int(broken or 0), "subs_renewed": int(renewed or 0)}
 
 
 async def _integrity(ctx: AppContext, *, limit: int) -> dict[str, int]:
@@ -174,6 +183,142 @@ async def _integrity(ctx: AppContext, *, limit: int) -> dict[str, int]:
     return {"mismatches": len(problems), "art_archived": len(archived)}
 
 
+async def _broadcasts(ctx: AppContext, *, limit: int) -> dict[str, int]:
+    """Fire every scheduled announcement whose moment has come (``/broadcast at …``)."""
+    async with ctx.db.tx() as session:
+        return await ctx.moderation.fire_due_broadcasts(session)
+
+
+#: Streaks under this length don't get a breaking warning (not worth a DM yet).
+STREAK_WARN_MIN = 3
+
+
+async def _streaks(ctx: AppContext, *, limit: int) -> dict[str, int]:
+    """Warn players whose streak breaks at the next nightly reset.
+
+    The at-risk window is exactly one day: after claiming yesterday, the streak
+    survives only a claim today, and the nightly ``reset_streaks`` pass is what
+    actually breaks it. ``user_streaks`` says who is on the line; a kv_state
+    marker (one entry per warned user per cycle) makes the warning a single DM,
+    not an hourly one. Failed sends stay unmarked and retry next hour.
+    """
+    from datetime import timedelta
+
+    from sqlalchemy import select
+
+    from waifu.db.models import Streak
+    from waifu.db.repo import stats
+    from waifu.utils.time import now_utc
+
+    if ctx.bot is None:
+        return {"streak_warnings": 0}
+    yesterday = (now_utc().date() - timedelta(days=1)).isoformat()
+    async with ctx.db.tx() as session:
+        at_risk = (
+            (
+                await session.execute(
+                    select(Streak).where(
+                        Streak.last_date == yesterday, Streak.current >= STREAK_WARN_MIN
+                    )
+                )
+            )
+            .scalars()
+            .all()
+        )
+        # Prune cycles that are over; keep only today's markers.
+        warned = {
+            k: v
+            for k, v in (await stats.kv_get(session, "streak_warnings")).items()
+            if v == yesterday
+        }
+        fresh = [row for row in at_risk if warned.get(str(row.user_id)) != yesterday]
+    if not fresh:
+        return {"streak_warnings": 0}
+
+    from waifu.tg.notify import SendOutcome, safe_send
+
+    sent = 0
+    for row in fresh:
+        html = (
+            f"⚠️ your <b>{row.current}-day streak</b> breaks tonight if you skip <code>/daily</code>"
+            + (
+                f" — you have {row.freezes} freeze(s) that will bridge it."
+                if row.freezes
+                else " (streak freezes exist — /streak)."
+            )
+        )
+        result = await safe_send(ctx.bot, row.user_id, html, parse_mode="HTML")
+        if result.outcome in (SendOutcome.SENT, SendOutcome.BLOCKED):
+            warned[str(row.user_id)] = yesterday
+        if result.outcome is SendOutcome.SENT:
+            sent += 1
+    async with ctx.db.tx() as session:
+        await stats.kv_set(session, "streak_warnings", warned)
+    return {"streak_warnings": sent}
+
+
+async def send_digest(ctx: AppContext, *, days: int = 7) -> bool:
+    """Compute the owner digest and post it to the log channel (rich layout when
+    the server has the feature, the plain table otherwise). Shared by the Sunday
+    pass and the ``/digest`` command so both produce the identical card.
+
+    Returns ``False`` when the log channel is not configured — the digest is a
+    feed for the owner, not a chat command, so there is no other destination.
+    """
+    from waifu.tg.rich import rich_digest
+    from waifu.utils.time import now_utc
+
+    if not ctx.settings.log_channel_id:
+        return False
+    async with ctx.db.tx() as session:
+        summary = await ctx.stats.week_summary(session, days=days)
+    rows = ctx.stats.digest_rows(summary)
+    stamp = now_utc().strftime("%Y-%m-%d %H:%M UTC")
+    title = f"📊 weekly digest · {ctx.settings.bot_title}"
+    fallback = title + "\n" + "\n".join(f"{label}: {value}" for label, value in rows)
+    return await ctx.notify(
+        fallback, silent=True, rich=rich_digest(title, rows, footer=f"as of {stamp}")
+    )
+
+
+async def _digest(ctx: AppContext, *, limit: int) -> dict[str, int]:
+    """The Sunday digest. The pass interval is a week; it re-checks the clock
+    every run so a bot that stays up across Sunday 00:00 sends exactly once."""
+    from waifu.utils.time import now_utc
+
+    sent = 0
+    if now_utc().weekday() == 6:  # Sunday
+        sent = 1 if await send_digest(ctx) else 0
+    return {"digest_sent": sent}
+
+
+async def _backup(ctx: AppContext, *, limit: int) -> dict[str, int]:
+    """One snapshot of the entire database per day (retention ``BACKUP_KEEP``).
+
+    Doubly deduplicated: the interval is 24 h *and* the pass stamps a kv entry,
+    because ``waifu jobs --name all`` driven from cron may fire more often than
+    a day — "no data loss" must never turn into "disk full".
+    """
+    from waifu.db import prune_backups
+    from waifu.db.repo import stats
+
+    async with ctx.db.tx() as session:
+        last = await stats.kv_get(session, "last_backup") or {}
+    if time.time() - float(last.get("at", 0)) < 20 * 3600:
+        return {}
+    path, counts = await ctx.db.backup(ctx.settings.backup_dir)
+    pruned = prune_backups(ctx.settings.backup_dir, keep=int(ctx.settings.backup_keep))
+    total = sum(counts.values())
+    await ctx.notify(
+        f"💾 database backup: {path.name} — {total:,} rows across {len(counts)} tables"
+        + (f" ({pruned} older removed)" if pruned else ""),
+        silent=True,
+    )
+    async with ctx.db.tx() as session:
+        await stats.kv_set(session, "last_backup", {"at": time.time(), "file": path.name})
+    return {"rows": total, "pruned": pruned}
+
+
 PASSES: dict[str, Callable[..., Awaitable[dict[str, int]]]] = {
     "autospawn": _autospawn,
     "spawns": _spawns,
@@ -183,6 +328,10 @@ PASSES: dict[str, Callable[..., Awaitable[dict[str, int]]]] = {
     "raffles": _raffles,
     "nightly": _nightly,
     "integrity": _integrity,
+    "broadcasts": _broadcasts,
+    "streaks": _streaks,
+    "digest": _digest,
+    "backup": _backup,
 }
 
 

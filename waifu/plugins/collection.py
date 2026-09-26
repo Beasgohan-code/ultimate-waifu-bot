@@ -45,7 +45,7 @@ from waifu.plugins._kit import (
 if TYPE_CHECKING:  # pragma: no cover
     from waifu.core.access import Access
     from waifu.core.context import AppContext
-    from waifu.db.repositories import collection as collection_repo
+    from waifu.db.repo import collection as collection_repo
     from waifu.services.collection import CollectionPage
 
 router = Router(name="collection")
@@ -225,7 +225,7 @@ async def send_page(
 
 
 async def _roster_size(session: Any) -> int:
-    from waifu.db.repositories import characters as char_repo
+    from waifu.db.repo import characters as char_repo
 
     totals = await char_repo.totals(session)
     return int(totals.get("characters", 0) or 0)
@@ -242,7 +242,7 @@ def _page_builder(
     rarity_id: int | None,
     roster: int,
 ) -> RichMessageBuilder:
-    from waifu.db.repositories import users as user_repo  # local: keeps import cost off startup
+    from waifu.db.repo import users as user_repo  # local: keeps import cost off startup
 
     del user_repo  # (name resolution happens in _page_plain's caller via mention())
     ladder = ladder_line(data.per_rarity)
@@ -440,7 +440,7 @@ async def col_mode(
     mode = parts[2] if len(parts) > 2 else "rarity"
     extra = ":".join(parts[3:])
     _, rarity_id, query = _parse_extra(extra) if extra else ("rarity", None, "")
-    from waifu.db.repositories import users as user_repo
+    from waifu.db.repo import users as user_repo
 
     await user_repo.set_pref(session, access.user_id, hmode=mode)
     await send_page(
@@ -699,7 +699,7 @@ async def search(
         return
     builder = RichMessageBuilder().heading(f"🔎 {money(total)} matches", size=2)
     rows = [["character", "rarity", "price", "in your harem"]]
-    from waifu.db.repositories import collection as collection_repo
+    from waifu.db.repo import collection as collection_repo
 
     owned: dict[int, collection_repo.Owned] = {}
     for character in hits:

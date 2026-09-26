@@ -28,11 +28,11 @@ import pytest_asyncio
 from sqlalchemy import func, select
 
 from waifu.core.context import AppContext
-from waifu.db.cache import Cache
-from waifu.db.engine import Database
+from waifu.db import Database
 from waifu.db.models import Character
-from waifu.db.repositories import users as user_repo
+from waifu.db.repo import users as user_repo
 from waifu.db.seed import seed_all
+from waifu.db.state import Cache
 from waifu.services import build as build_services
 from waifu.settings import Settings
 
@@ -56,10 +56,12 @@ def test_settings(tmp_path: object) -> Settings:
 async def db(tmp_path) -> AsyncIterator[Database]:
     """A fresh database: ladders from the migration, roster asked for explicitly.
 
-    ``characters=True`` is a *test* decision, not the product's: gameplay tests need a
-    pool to pull from, and the shipped catalogue is the cheapest real one. A fresh install
-    leaves the roster empty and fills it through ``/upload`` — the contract
-    :mod:`tests.test_catalogue_seed` pins down.
+    ``characters=True`` mirrors the product default (the shipped catalogue is the
+    install policy since 2026-09-24 — a fresh bot is playable) and is stated here
+    anyway because a fixture must not depend on the ambient environment: gameplay
+    tests need a pool to pull from, and the shipped catalogue is the cheapest real
+    one. The opt-out (``SEED_CATALOGUE=0``) is pinned in
+    :mod:`tests.test_uploads`.
     """
     settings = test_settings(tmp_path)
     database = Database.from_settings(settings)
@@ -107,7 +109,7 @@ async def player(ctx) -> int:
     user_id = 4242
     async with ctx.db.tx() as session:
         await user_repo.upsert(session, user_id, username="tester", first_name="Test")
-        from waifu.db.repositories import economy as ledger
+        from waifu.db.repo import economy as ledger
 
         await ledger.credit(session, user_id, 5_000_000, "admin_grant", reference="fixture")
     return user_id
@@ -119,7 +121,7 @@ async def partner(ctx) -> int:
     user_id = 9999
     async with ctx.db.tx() as session:
         await user_repo.upsert(session, user_id, username="partner", first_name="Part")
-        from waifu.db.repositories import economy as ledger
+        from waifu.db.repo import economy as ledger
 
         await ledger.credit(session, user_id, 100_000, "admin_grant", reference="fixture")
     return user_id

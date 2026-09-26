@@ -47,3 +47,39 @@ def forum_thread(chat: Any) -> int | None:
     """
     thread_id = getattr(chat, "message_thread_id", None)
     return int(thread_id) if thread_id else None
+
+
+def effective_chat(update: Any) -> Any:
+    """The chat an update belongs to — ``None`` when the type has no chat.
+
+    aiogram 3.31's ``Update`` exposes neither ``effective_chat`` nor
+    ``effective_user`` (the old helpers were removed), and the Bot API keeps
+    landing update types with different shapes — ``subscription`` carries
+    ``user`` but no chat, ``purchased_paid_media`` carries ``from_user`` but
+    no chat, ``chat_boost`` carries a chat but no user. Every consumer of this
+    bot must duck-type instead of assuming a shape, or the *next* Bot API
+    release breaks the middleware that was fine today. ``getattr`` with
+    defaults means an unknown update degrades to ``(None, None)`` rather than
+    raising inside error handling.
+    """
+    return _effective(update, "chat")
+
+
+def effective_user(update: Any) -> Any:
+    """The user an update came from — see :func:`effective_chat` for why."""
+    user = _effective(update, "from_user")
+    if user is None:
+        user = _effective(update, "user")  # BotSubscriptionUpdated, PollAnswer, guest updates
+    return user
+
+
+def _effective(update: Any, name: str) -> Any:
+    payload = update
+    if hasattr(update, "event") and getattr(update, "update_id", None) is not None:
+        # An ``Update`` wrapper: the typed payload (message / subscription / …)
+        # is where the field actually lives.
+        try:
+            payload = update.event
+        except Exception:  # pragma: no cover - unknown future update type
+            return None
+    return getattr(payload, name, None)

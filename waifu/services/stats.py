@@ -22,16 +22,16 @@ from typing import Any
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from waifu.db.models import User
-from waifu.db.repositories import characters as char_repo
-from waifu.db.repositories import collection as collection_repo
-from waifu.db.repositories import economy as ledger
-from waifu.db.repositories import items as items_repo
-from waifu.db.repositories import moderation as mod_repo
-from waifu.db.repositories import monetize as monetize_repo
-from waifu.db.repositories import progress as progress_repo
-from waifu.db.repositories import spawns as spawn_repo
-from waifu.db.repositories import stats as stats_repo
-from waifu.db.repositories import users as user_repo
+from waifu.db.repo import characters as char_repo
+from waifu.db.repo import collection as collection_repo
+from waifu.db.repo import economy as ledger
+from waifu.db.repo import items as items_repo
+from waifu.db.repo import moderation as mod_repo
+from waifu.db.repo import monetize as monetize_repo
+from waifu.db.repo import progress as progress_repo
+from waifu.db.repo import spawns as spawn_repo
+from waifu.db.repo import stats as stats_repo
+from waifu.db.repo import users as user_repo
 from waifu.enums import Rarity
 from waifu.errors import NotFound
 from waifu.services.base import Service
@@ -405,11 +405,47 @@ class StatsService(Service):
         }
 
     async def _purge_trades(self, session: AsyncSession, *, days: int) -> int:
-        from waifu.db.repositories import trades as trade_repo
+        from waifu.db.repo import trades as trade_repo
 
         return await trade_repo.purge_trade_history(session, older_than_days=days)
 
     async def _purge_codes(self, session: AsyncSession) -> int:
-        from waifu.db.repositories import trades as trade_repo
+        from waifu.db.repo import trades as trade_repo
 
         return await trade_repo.purge_expired(session)
+
+    # ---------------------------------------------------------------- digests
+    async def week_summary(self, session: AsyncSession, *, days: int = 7) -> dict[str, int]:
+        """The week in seven numbers — the owner digest's raw material.
+
+        Combines the cheap indexed counts (players, gifts, raffles, pulls,
+        active subscriptions) with the Stars revenue total, so the digest is
+        one method and one ``notify`` call for both the weekly job and
+        ``/digest``.
+        """
+        from datetime import timedelta
+
+        from waifu.db.repo import monetize as monetize_repo
+        from waifu.utils.time import now_utc
+
+        since = now_utc() - timedelta(days=days)
+        summary = await stats_repo.week_summary(session, since=since)
+        revenue = await monetize_repo.revenue(session, since=since)
+        summary["stars"] = int(revenue.get("stars", 0))
+        summary["orders"] = int(revenue.get("orders", 0))
+        summary["days"] = days
+        return summary
+
+    @staticmethod
+    def digest_rows(summary: dict[str, int]) -> list[list[object]]:
+        """``week_summary`` → table rows for the digest card (plain data only,
+        so the tg layer owns the rendering)."""
+        return [
+            ["new players", summary.get("new_players", 0)],
+            ["pulls", summary.get("pulls", 0)],
+            ["character gifts", summary.get("gifts", 0)],
+            ["raffles drawn", summary.get("raffles", 0)],
+            ["⭐ Stars in", summary.get("stars", 0)],
+            ["Stars orders", summary.get("orders", 0)],
+            ["premium now", summary.get("subs_active", 0)],
+        ]

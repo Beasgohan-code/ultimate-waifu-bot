@@ -29,6 +29,7 @@ from typing import Any
 
 from aiogram import Bot, Dispatcher
 
+from waifu import __api_version__, __version__
 from waifu.core.bot import (
     apply_identity,
     build_bot,
@@ -38,15 +39,22 @@ from waifu.core.bot import (
 )
 from waifu.core.context import AppContext
 from waifu.core.dp import RegistrationReport, build_dispatcher, build_storage
-from waifu.db.cache import Cache
-from waifu.db.engine import Database
-from waifu.db.redis_client import Redis
+from waifu.db import Database
+from waifu.db.state import Cache, Redis
 from waifu.logging import get_logger, setup_logging
 from waifu.services import build as build_services
 from waifu.settings import Settings, get_settings
 from waifu.tg.caps import Caps
 
 log = get_logger("core.app")
+
+
+async def _owner_log(app: BuiltApp, text: str, *, rich: Any | None = None) -> None:
+    """One line to the owner's log channel; a failed send must not break the lifecycle."""
+    try:
+        await app.ctx.notify(text, rich=rich)
+    except Exception as exc:  # pragma: no cover - by contract notify() does not raise
+        log.debug("owner log send failed: %s", exc)
 
 
 @dataclass(slots=True)
@@ -87,10 +95,32 @@ async def build_app(
     token: str | None = None,
     with_bot: bool = True,
     negotiate: bool = True,
+    with_plugins: bool = True,
+    migrate: bool = True,
 ) -> BuiltApp:
-    """Construct the full application. Never starts it."""
+    """Construct the full application. Never starts it.
+
+    ``with_plugins=False`` keeps a bare dispatcher (no routers attached) and
+    reports the plugin status through :func:`waifu.core.dp.plugin_report` —
+    for the CLI diagnostics (doctor/jobs/api) that never serve an update and
+    must not leave the module-level routers attached for a later dispatcher.
+    """
     cfg = settings or get_settings()
     db = Database.from_settings(cfg)
+    if migrate:
+        # A one-file deploy has no separate deploy step: the process that owns
+        # the database applies its pending schema upgrades at startup (idempotent,
+        # re-run safe). Without this, a fresh deploy boots into an empty file and
+        # every query dies with "no such table" (the Render deploys of 2026-09-24).
+        from waifu.db.migrations.runner import apply as apply_migrations
+
+        try:
+            applied = await apply_migrations(db.engine)
+        except Exception as exc:
+            log.error("schema upgrade failed: %s — run `waifu migrate`", exc)
+            raise
+        if applied:
+            log.info("schema: applied %s", ", ".join(applied))
     redis: Redis | None = None
     if cfg.redis_dsn:
         try:
@@ -118,7 +148,15 @@ async def build_app(
         caps=Caps.negotiate(cfg, api_flags),
     )
     ctx = build_services(ctx)
-    dp, report = build_dispatcher(cfg, ctx)
+    if with_plugins:
+        dp, report = build_dispatcher(cfg, ctx)
+    else:
+        from waifu.core.dp import plugin_report
+
+        # Bare dispatcher: the diagnostics never serve an update, and attaching
+        # the real routers here would make any later build_dispatcher fail.
+        dp = Dispatcher(storage=build_storage(cfg), ctx=ctx, settings=cfg)
+        report = plugin_report()
     if bot is not None:
         # aiogram injects workflow_data into every handler; ``ctx`` is how handlers
         # reach services without importing a singleton.
@@ -136,37 +174,85 @@ async def run(*, token: str | None = None, settings: Settings | None = None) -> 
     if app.bot is None:
         raise RuntimeError("BOT_TOKEN is required to run the bot (waifu doctor explains)")
     log.info("starting %s", app.summary)
+    try:
+        await delete_webhook_if_polling(app.bot, cfg)
+        await apply_identity(app.bot, cfg)
+        if cfg.set_command_menu:
+            # The menu is generated from the routers, so it can never list a command that
+            # does not exist or omit one that does.
+            from waifu.core.bot import set_command_menu
+            from waifu.core.dp import command_menu
 
-    await delete_webhook_if_polling(app.bot, cfg)
-    await apply_identity(app.bot, cfg)
-    if cfg.set_command_menu:
-        # The menu is generated from the routers, so it can never list a command that
-        # does not exist or omit one that does.
-        from waifu.core.bot import set_command_menu
-        from waifu.core.dp import command_menu
+            await set_command_menu(app.bot, command_menu(), settings=cfg)
+        if cfg.set_menu_button:
+            await configure_menu_button(app.bot, cfg)
+        await app.startup()
+        # One resident loop for every timer in the bot (spawns, expiries, settlements).
+        # ``python -m waifu jobs --name <pass>`` runs the same code from cron instead, so a
+        # deployment can drop this loop entirely by setting ``WAIFU_NO_JOBS=1``.
+        runner: Any = None
+        if not cfg.no_jobs:
+            from waifu.core.jobs import JobRunner
 
-        await set_command_menu(app.bot, command_menu(), settings=cfg)
-    if cfg.set_menu_button:
-        await configure_menu_button(app.bot, cfg)
-    await app.startup()
-    # One resident loop for every timer in the bot (spawns, expiries, settlements).
-    # ``python -m waifu jobs --name <pass>`` runs the same code from cron instead, so a
-    # deployment can drop this loop entirely by setting ``WAIFU_NO_JOBS=1``.
-    runner: Any = None
-    if not cfg.no_jobs:
-        from waifu.core.jobs import JobRunner
+            runner = JobRunner(app.ctx)
+            await runner.start()
 
-        runner = JobRunner(app.ctx)
-        await runner.start()
+        # The mini-app JSON API runs in this process (see waifu/api): same engine, same
+        # repositories, so the web view and the chat cannot disagree about a price.
+        api_runner: Any = None
+        if cfg.api_enabled:
+            from waifu.api import serve as serve_api
 
-    # The mini-app JSON API runs in this process (see waifu/api): same engine, same
-    # repositories, so the web view and the chat cannot disagree about a price.
-    api_runner: Any = None
-    if cfg.api_enabled:
-        from waifu.api import serve as serve_api
+            api_runner = await serve_api(app.ctx)
 
-        api_runner = await serve_api(app.ctx)
+        # Keep-alive health server (the Videl pattern): free-tier platforms sleep a
+        # *web* service that exposes no public endpoint, so polling mode gets a tiny
+        # one on $PORT (``/health`` + a deep ``/healthz``). Webhook mode already
+        # serves /healthz through its own app, so no second server there — and a
+        # taken port degrades to a warning, never to a crashed bot.
+        health_runner: Any = None
+        if cfg.mode == "polling" and cfg.health_enabled:
+            from waifu.core.health import resolve_port
+            from waifu.core.health import serve as serve_health
 
+            health_runner = await serve_health(app.ctx, cfg.health_host, resolve_port(cfg))
+
+        await _serve(app, cfg)
+    finally:
+        if health_runner is not None:
+            from waifu.core.health import stop as stop_health
+
+            await stop_health(health_runner)
+        if api_runner is not None:
+            await api_runner.cleanup()
+        if runner is not None:
+            await runner.stop()
+        await app.shutdown()
+
+
+async def _serve(app: BuiltApp, cfg: Settings) -> None:
+    """The blocking loop (webhooks or long polling) with owner-log bookends.
+
+    The owner's log channel gets a "started" line with the full capability
+    summary, and a "stopped" line — or a "crashed" one first — on the way out,
+    so a silent deploy or a 3 a.m. death is visible in the channel, not only in
+    a web log nobody reads.
+    """
+    from waifu.tg.rich import rich_log
+    from waifu.utils.time import now_utc
+
+    stamp = now_utc().strftime("%Y-%m-%d %H:%M UTC")
+    await _owner_log(
+        app,
+        f"🟢 {cfg.bot_title} started · v{__version__} · Bot API {__api_version__} · "
+        f"{stamp} · {app.summary}",
+        rich=rich_log(
+            f"🟢 {cfg.bot_title} started",
+            app.summary,
+            detail=f"v{__version__} · Bot API {__api_version__} · {stamp}",
+        ),
+    )
+    crashed = False
     try:
         if cfg.mode == "webhook":
             done = await _run_webhooks(app, cfg)
@@ -182,12 +268,29 @@ async def run(*, token: str | None = None, settings: Settings | None = None) -> 
                 drop_pending_updates=cfg.drop_pending_updates,
                 handle_signals=True,
             )
+    except Exception as exc:
+        crashed = True
+        log.exception("bot run failed: %s", exc)
+        await _owner_log(
+            app,
+            f"💥 {cfg.bot_title} crashed: {type(exc).__name__}: {str(exc)[:300]}",
+            rich=rich_log(
+                f"💥 {cfg.bot_title} crashed",
+                type(exc).__name__,
+                detail=str(exc)[:1000],
+            ),
+        )
+        raise
     finally:
-        if api_runner is not None:
-            await api_runner.cleanup()
-        if runner is not None:
-            await runner.stop()
-        await app.shutdown()
+        await _owner_log(
+            app,
+            f"🔴 {cfg.bot_title} {'stopped after a crash' if crashed else 'stopped'} "
+            f"after {app.ctx.uptime_text}",
+            rich=rich_log(
+                f"🔴 {cfg.bot_title} {'crashed — stopped' if crashed else 'stopped'}",
+                f"ran for {app.ctx.uptime_text}",
+            ),
+        )
 
 
 #: Every update type the bot can act on. Missing one here = a feature silently dead.

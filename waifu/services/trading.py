@@ -26,17 +26,17 @@ from typing import Any
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from waifu.db.models import Character, RedeemCode, TradeOffer
-from waifu.db.repositories import characters as char_repo
-from waifu.db.repositories import collection as collection_repo
-from waifu.db.repositories import economy as ledger
-from waifu.db.repositories import moderation as mod_repo
-from waifu.db.repositories import trades as trade_repo
-from waifu.db.repositories import users as user_repo
+from waifu.db.repo import characters as char_repo
+from waifu.db.repo import collection as collection_repo
+from waifu.db.repo import economy as ledger
+from waifu.db.repo import moderation as mod_repo
+from waifu.db.repo import trades as trade_repo
+from waifu.db.repo import users as user_repo
 from waifu.enums import LedgerReason, Rarity
 from waifu.errors import Locked, NotFound, WaifuError
 from waifu.services.base import Service
 from waifu.tg.ephemeral import send_ephemeral
-from waifu.utils.text import truncate
+from waifu.utils.text import esc, truncate
 from waifu.utils.time import human_delta, now_utc, to_naive_utc
 
 
@@ -290,6 +290,11 @@ class TradeService(Service):
             target=str(trade_id),
             detail=f"moves={';'.join(mover)} cash={offer.cash}",
         )
+        view = await self.view(session, offer)
+        await self.log_line(
+            f"🔁 trade #{trade_id}: {offer.initiator_id} ⇄ {offer.partner_id} · {view.summary}",
+            silent=True,
+        )
         if self.redis is not None:
             for user_id in (offer.initiator_id, offer.partner_id):
                 await self.redis.delete("trade", user_id)
@@ -358,6 +363,26 @@ class GiftService(Service):
             character_id=0,
             note=f"coins:{amount}",
         )
+        sender = await user_repo.get(session, sender_id)
+        who = esc(sender.full_name or str(sender_id)) if sender is not None else str(sender_id)
+        from waifu.tg.rich import rich_log
+
+        await self.log_line(
+            f"🪙 coin gift: {sender_id} → {receiver_id} · {amount:,} 🪙"
+            + (f" (tax {tax:,})" if tax else ""),
+            silent=True,
+            rich=rich_log(
+                "🪙 coin gift",
+                f"{sender_id} → {receiver_id}",
+                detail=f"{amount:,} 🪙" + (f" · tax {tax:,}" if tax else ""),
+            ),
+        )
+        # The receiver was never told anything before — a coin gift only existed in /giftlog.
+        await self.notify(
+            receiver_id,
+            f"🪙 <b>{who}</b> sent you <b>{amount:,} 🪙</b>.",
+            silent=True,
+        )
         return {"amount": amount, "tax": tax, "balance": await ledger.balance(session, sender_id)}
 
     async def character(
@@ -368,6 +393,7 @@ class GiftService(Service):
         character_id: int,
         *,
         note: str = "",
+        anonymous: bool = False,
     ) -> dict[str, Any]:
         if await collection_repo.has_count(session, sender_id, character_id) < 1:
             raise NotFound("you do not own that character")
@@ -383,6 +409,64 @@ class GiftService(Service):
             note=note,
         )
         character = await char_repo.get(session, character_id)
+        # The owner's channel gets the record (sender is only named when the
+        # gift is not anonymous — the player-facing note already hides it, so
+        # the staff log must hide it too, or /anon is theatre).
+        if character is not None:
+            rarity = Rarity.from_value(int(character.rarity_id))
+            from waifu.tg.rich import gift_receipt_rich, rich_log
+
+            await self.log_line(
+                "🎁 character gift: "
+                + ("anonymous → " if anonymous else f"{sender_id} → ")
+                + f"{receiver_id} · {character.name} ({rarity.label})"
+                + (f" · “{note[:60]}”" if note else ""),
+                silent=True,
+                rich=rich_log(
+                    "🎁 character gift",
+                    f"{'anonymous' if anonymous else str(sender_id)} → {receiver_id}",
+                    detail=f"{character.name} · {rarity.label}",
+                ),
+            )
+            # The receiver gets a private receipt: which character, its name,
+            # its rarity and its art — the "someone gave me a character" moment
+            # the reference bot delivered as a public group line only. Rich
+            # layout on new-API servers, the HTML card as the fallback.
+            sender = None if anonymous else await user_repo.get(session, sender_id)
+            if anonymous:
+                from_label = "an anonymous admirer 🎭"
+            elif sender is not None:
+                from_label = f'<a href="tg://user?id={sender_id}">{esc(sender.full_name or str(sender_id))}</a>'
+            else:
+                from_label = f"user {sender_id}"
+            body = (
+                "🎁 <b>You received a gift!</b>\n\n"
+                f"<b>{esc(character.name)}</b>"
+                + (f" — {esc(character.anime)}" if character.anime else "")
+                + f"\n{rarity.badge}"
+                + (f"\n\n<i>“{esc(note[:120])}”</i>" if note else "")
+                + f"\n\nFrom: {from_label}"
+            )
+            await self.deliver_character_dm(
+                receiver_id,
+                character,
+                body,
+                rich=gift_receipt_rich(
+                    name=character.name,
+                    series=character.anime,
+                    rarity=rarity.label,
+                    note=note,
+                    from_name=""
+                    if anonymous
+                    else (sender.full_name if sender is not None else str(sender_id)),
+                    media=character.photo_file_id or character.image_url or "",
+                ),
+            )
+        else:  # pragma: no cover - the row vanished mid-transfer; the log still proves it
+            await self.log_line(
+                f"🎁 character gift: {'anonymous → ' if anonymous else f'{sender_id} → '}{receiver_id} · #{character_id} (row missing)",
+                silent=True,
+            )
         return {
             "name": character.name if character else f"#{character_id}",
             "receiver": receiver_id,

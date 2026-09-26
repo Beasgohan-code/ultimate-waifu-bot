@@ -21,7 +21,7 @@ import pytest
 from aiogram.types import InlineQueryResultArticle, InlineQueryResultPhoto, User
 
 from waifu.db.models import Ownership
-from waifu.db.repositories import characters as char_repo
+from waifu.db.repo import characters as char_repo
 from waifu.enums import Rarity
 from waifu.plugins import inline
 from waifu.plugins.inline import build_results, caption_for, rarity_line, result_id
@@ -31,7 +31,7 @@ SENDER = User.model_construct(id=SENDER_ID, is_bot=False, first_name="Me")
 
 
 async def _own(tx, character_id: int, user_id: int, *, count: int = 1) -> None:
-    from waifu.db.repositories import users as user_repo
+    from waifu.db.repo import users as user_repo
 
     await user_repo.upsert(tx, user_id, username=f"inline{user_id}", first_name="Owner")
     tx.add(

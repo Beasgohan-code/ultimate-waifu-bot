@@ -13,9 +13,9 @@ import pytest
 from sqlalchemy import select
 
 from waifu.db.models import Character, Transaction
-from waifu.db.repositories import economy as ledger
-from waifu.db.repositories import items as items_repo
-from waifu.db.repositories import users as user_repo
+from waifu.db.repo import economy as ledger
+from waifu.db.repo import items as items_repo
+from waifu.db.repo import users as user_repo
 from waifu.enums import Rarity
 from waifu.errors import AlreadyClaimed, NotEnoughFunds, WaifuError
 
@@ -25,7 +25,7 @@ async def balance_of(session, user_id: int) -> int:
 
 
 async def collection_repo_has(session, user_id: int, character_id: int) -> bool:
-    from waifu.db.repositories import collection as collection_repo
+    from waifu.db.repo import collection as collection_repo
 
     return bool(await collection_repo.has_count(session, user_id, character_id))
 
@@ -55,7 +55,7 @@ async def test_ten_pull_is_cheaper_and_guarantees_a_rare(ctx, tx, player):
 
 
 async def test_dupe_pays_a_share_of_the_price(ctx, tx, player, any_character):
-    from waifu.db.repositories import collection as collection_repo
+    from waifu.db.repo import collection as collection_repo
 
     """The reference bot paid full price for a dupe, which made farming dupes profitable.
 
@@ -196,7 +196,7 @@ async def test_achievements_unlock_from_real_data(ctx, tx, player):
 
 
 async def test_auction_escrow_and_settlement(ctx, tx, player, partner, any_character):
-    from waifu.db.repositories import collection as collection_repo
+    from waifu.db.repo import collection as collection_repo
 
     await collection_repo.grant(tx, player, any_character.id, source="test")
     seller_before = await balance_of(tx, player)
@@ -212,7 +212,7 @@ async def test_auction_escrow_and_settlement(ctx, tx, player, partner, any_chara
     assert await balance_of(tx, partner) == 100_000 + ctx.settings.starting_balance - 2000, (
         "the bid must be escrowed, not merely noted"
     )
-    from waifu.db.repositories import auctions as auctions_repo
+    from waifu.db.repo import auctions as auctions_repo
 
     row = await auctions_repo.get(tx, view.id)
     assert row is not None
@@ -227,8 +227,8 @@ async def test_auction_escrow_and_settlement(ctx, tx, player, partner, any_chara
 
 
 async def test_trade_execute_swaps_ownership_and_refunds_on_cancel(ctx, tx, player, partner):
-    from waifu.db.repositories import collection as collection_repo
-    from waifu.db.repositories import trades as trades_repo
+    from waifu.db.repo import collection as collection_repo
+    from waifu.db.repo import trades as trades_repo
 
     mine = (
         await tx.execute(select(Character).where(Character.rarity_id == 1).limit(1))
@@ -262,8 +262,8 @@ async def test_redeem_code_pays_once_per_use(ctx, tx, player):
 
 async def test_bomb_is_blocked_by_a_shield(ctx, tx, player, partner, any_character):
     """The name said "steal" while the body bombed someone; the test follows the code."""
-    from waifu.db.repositories import collection as collection_repo
-    from waifu.db.repositories import items as items_repo
+    from waifu.db.repo import collection as collection_repo
+    from waifu.db.repo import items as items_repo
 
     await collection_repo.grant(tx, partner, any_character.id, source="test")
     await ctx.items.buy(tx, partner, "bshield", quantity=1)
@@ -307,7 +307,7 @@ async def test_ledger_is_the_only_wallet_and_balances_reconcile(ctx, tx, player,
 
 
 async def test_collection_pages_group_by_rarity(ctx, tx, player, any_character):
-    from waifu.db.repositories import collection as collection_repo
+    from waifu.db.repo import collection as collection_repo
 
     for character in (
         await tx.execute(select(Character).where(Character.rarity_id.in_([1, 1, 2])).limit(3))

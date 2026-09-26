@@ -10,7 +10,7 @@ The reference bot's ``/market`` had three problems this module fixes:
   which let two simultaneous purchases both succeed.
 
 Here the storefront is paged per tier, prices come from
-:meth:`waifu.db.repositories.characters.price_for` (which is where a supply factor
+:meth:`waifu.db.repo.characters.price_for` (which is where a supply factor
 would go — one place), and purchase is one service call inside the update's
 transaction.
 """
@@ -135,7 +135,7 @@ async def send_market(
 
 
 async def _owned_count(session: Any, user_id: int, character_id: int) -> int:
-    from waifu.db.repositories import collection as collection_repo
+    from waifu.db.repo import collection as collection_repo
 
     return int(await collection_repo.has_count(session, user_id, character_id))
 
@@ -322,7 +322,7 @@ async def buyitem(
 
 
 def _item_defs() -> list[Any]:
-    from waifu.db.repositories import items as items_repo
+    from waifu.db.repo import items as items_repo
 
     return list(items_repo.ITEMS.values())
 

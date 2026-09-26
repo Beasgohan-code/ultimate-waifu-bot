@@ -12,7 +12,7 @@ The contract these tests pin:
 * fewer than four characters in the roster means **auto-approve** — a security feature must not
   become a way to lock a group — and neither must a failure to ask;
 * a blocked DM declines with a reason instead of leaving the request pending forever;
-* state lives in :class:`~waifu.db.cache.Cache`, so nothing is written to the database for a
+* state lives in :class:`~waifu.db.state.Cache`, so nothing is written to the database for a
   request that goes cold and no migration was needed to add the feature.
 
 Events are real aiogram models bound to a recording bot via ``context={"bot": ...}``. That path

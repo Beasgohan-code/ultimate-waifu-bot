@@ -27,11 +27,11 @@ from aiogram.types import Chat, Message, PhotoSize, User
 
 from tests.conftest import test_settings as make_settings
 from waifu.core.access import Access
-from waifu.db.engine import Database
+from waifu.db import Database
 from waifu.db.migrations import _personas
 from waifu.db.models import Character, RarityChance
-from waifu.db.repositories import characters as char_repo
-from waifu.db.repositories import spawns as spawn_repo
+from waifu.db.repo import characters as char_repo
+from waifu.db.repo import spawns as spawn_repo
 from waifu.db.seed import catalogue_rows, seed_all
 from waifu.enums import Rarity, Role
 from waifu.plugins import uploads
@@ -377,23 +377,32 @@ def test_only_the_two_approved_hosts_are_fetched() -> None:
     assert require_image_url(" https://i.ibb.co/x/y.jpg ").endswith("y.jpg")
 
 
-# ----------------------------------------------------------- empty-roster contract
-async def test_fresh_migrations_leave_the_roster_empty(tmp_path) -> None:
-    """The headline contract: schema and ladders arrive, characters do not."""
+# ----------------------------------------------------------- roster install policy
+async def test_fresh_migrations_ship_the_catalogue(tmp_path, monkeypatch) -> None:
+    """The headline contract, flipped for 2026-09-24: a fresh install is
+    *playable* — schema, ladders and the shipped 177-character catalogue arrive
+    together, so /summon and the spawns have a roster from the first message."""
     settings = make_settings(tmp_path)
+    monkeypatch.setattr(
+        "waifu.settings._settings", settings.model_copy(update={"seed_catalogue": True})
+    )
     database = Database.from_settings(settings)
     await database.create_all()
     async with database.engine.begin() as conn:
-        await _personas(conn)  # the migration step that used to seed 177 characters
+        await _personas(conn)  # the migration step that loads the shipped roster
     await seed_all(database.engine)  # the migrate command's tail, policy-driven
     async with database.tx() as session:
-        assert await _count(session, Character) == 0, "a fresh install ships no roster"
+        assert await _count(session, Character) == len(catalogue_rows()), (
+            "a fresh install ships the roster"
+        )
         ladders = await _count(session, RarityChance)
     assert ladders == len(list(Rarity)), "the 18-tier ladder is configuration, not content"
     await database.dispose()
 
 
-async def test_seed_catalogue_flag_is_the_opt_in(tmp_path, monkeypatch) -> None:
+async def test_seed_catalogue_zero_is_the_opt_out(tmp_path, monkeypatch) -> None:
+    """SEED_CATALOGUE=0 keeps the old behaviour: ladders yes, roster no — the
+    operator builds it with /upload or waifu import-legacy."""
     settings = make_settings(tmp_path)
     database = Database.from_settings(settings)
     await database.create_all()
@@ -401,8 +410,7 @@ async def test_seed_catalogue_flag_is_the_opt_in(tmp_path, monkeypatch) -> None:
         monkeypatch.setattr(
             "waifu.settings._settings", settings.model_copy(update={"seed_catalogue": False})
         )
-        report = await seed_all(database.engine)
-        assert int((report.get("characters") or {}).get("inserted", -1)) == -1 or True
+        await seed_all(database.engine)
         async with database.tx() as session:
             assert await _count(session, Character) == 0
         monkeypatch.setattr(

@@ -162,7 +162,7 @@ async def test_doctor_reports_a_healthy_database(ctx) -> None:
     health = await ctx.db.healthcheck()
     assert health["db"] == "ok"
     assert "users" in health
-    from waifu.db.repositories import characters as char_repo
+    from waifu.db.repo import characters as char_repo
 
     async with ctx.db.tx() as session:
         totals = await char_repo.totals(session)

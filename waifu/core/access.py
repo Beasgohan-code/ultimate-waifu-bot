@@ -17,8 +17,8 @@ from aiogram.enums import ChatMemberStatus
 from aiogram.types import CallbackQuery, ChatMemberUpdated, Message
 
 from waifu.db.models import User
-from waifu.db.repositories import moderation as mod_repo
-from waifu.db.repositories import users as user_repo
+from waifu.db.repo import moderation as mod_repo
+from waifu.db.repo import users as user_repo
 from waifu.enums import Role
 from waifu.errors import PermissionDenied
 from waifu.settings import Settings
@@ -26,7 +26,7 @@ from waifu.settings import Settings
 if TYPE_CHECKING:  # pragma: no cover
     from aiogram import Bot
 
-    from waifu.db.redis_client import Redis
+    from waifu.db.state import Redis
 
 #: Telegram's anonymous-admin channel; needed for ``/unban`` of channel admins.
 ANONYMOUS_ADMIN_ID = 1087968824

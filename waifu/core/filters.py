@@ -11,7 +11,7 @@ from aiogram.types import CallbackQuery, Message, TelegramObject
 from aiogram.types import User as TgUser
 
 from waifu.core.access import Access
-from waifu.db.repositories.users import Role
+from waifu.enums import Role
 from waifu.errors import PermissionDenied
 
 
@@ -23,7 +23,7 @@ class IsRegistered(BaseFilter):
 
 
 class RequirePermission(BaseFilter):
-    """Gate a handler on a permission slug (see repositories/users.PERMISSIONS)."""
+    """Gate a handler on a permission slug (see the PERMISSIONS table in ``waifu.db.repo.moderation``)."""
 
     def __init__(
         self, permission: str | None = None, *, roles: tuple[Role, ...] | None = None

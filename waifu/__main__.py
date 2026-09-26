@@ -17,8 +17,12 @@ from __future__ import annotations
 
 import argparse
 import asyncio
+import os
 import sys
+import time
 from collections.abc import Awaitable, Sequence
+from pathlib import Path
+from typing import Any
 
 __all__ = ["cli", "main"]
 
@@ -40,12 +44,12 @@ def _parser() -> argparse.ArgumentParser:
     sub.add_parser("migrate", help="create/upgrade the schema (idempotent)")
 
     seedp = sub.add_parser(
-        "seed", help="load the rarity ladders (the roster is empty on purpose; see --catalogue)"
+        "seed", help="load the rarity ladders and, by default, the shipped catalogue"
     )
     seedp.add_argument(
         "--catalogue",
         action="store_true",
-        help="also insert the shipped catalogue (waifu/data/characters.seed.json)",
+        help="force the shipped catalogue even when SEED_CATALOGUE=0 (waifu/data/characters.seed.json)",
     )
     seedp.add_argument(
         "--force", action="store_true", help="re-apply catalogue rows by name+series"
@@ -80,7 +84,22 @@ def _parser() -> argparse.ArgumentParser:
 
     jobs = sub.add_parser("jobs", help="run one scheduler pass (cron instead of polling)")
     jobs.add_argument(
-        "--name", default="all", help="autospawn | settle | quests | premium | cleanup | all"
+        "--name", default="all", help="any pass name (autospawn, auctions, backup, …) or all"
+    )
+
+    backupp = sub.add_parser(
+        "backup", help="snapshot the whole database to one JSON file (default BACKUP_DIR)"
+    )
+    backupp.add_argument("--dir", default="", help="output directory (default BACKUP_DIR)")
+
+    restorep = sub.add_parser(
+        "restore", help="replace the database with a backup file (all-or-nothing)"
+    )
+    restorep.add_argument("file", help="path to a waifu-backup-*.json file")
+    restorep.add_argument(
+        "--yes",
+        action="store_true",
+        help="apply it (without --yes only a preview is printed, nothing is written)",
     )
 
     sub.add_parser("version", help="print the package version")
@@ -103,6 +122,10 @@ def main(argv: Sequence[str] | None = None) -> int:  # noqa: PLR0911 - a subcomm
         return _run(_api(host=args.host, port=args.port, insecure_uid=args.insecure_uid_query))
     if args.command == "jobs":
         return _run(_jobs(args.name))
+    if args.command == "backup":
+        return _run(_backup_file(dir=args.dir))
+    if args.command == "restore":
+        return _run(_restore_file(args.file, apply=args.yes))
     if args.command == "version":
         from waifu import __version__
 
@@ -115,13 +138,63 @@ def cli() -> None:  # pragma: no cover - console-script shim
     raise SystemExit(main())
 
 
+def _env_name_for_field(field: str) -> str:
+    """The env var name behind a Settings field (aliases included)."""
+    from waifu.settings import Settings
+
+    info = Settings.model_fields.get(field)
+    if info is not None:
+        alias = info.validation_alias or info.alias
+        if isinstance(alias, str):
+            return alias.upper()
+        choices = getattr(alias, "choices", None)
+        if choices:
+            return str(choices[0]).upper()
+    return field.upper()
+
+
+def _explain_settings_error(exc: Exception) -> None:
+    """Turn pydantic-settings' 'error parsing value for field …' into an answer.
+
+    A deploy that dies on env parsing must say *which variable*, *what value it
+    had*, and *what format works* — that triple is what takes a 1 a.m. incident
+    from an hour to five minutes.
+    """
+    import re
+
+    m = re.search(r'field "(\w+)"', str(exc))
+    field = m.group(1) if m else "?"
+    env_name = _env_name_for_field(field)
+    value = os.environ.get(env_name)
+    if value is None:
+        detail = f"({env_name} is not set — the default was rejected, which means the "
+        "failure is in a computed field)"
+    elif any(word in field.lower() for word in ("token", "secret", "password")):
+        detail = f"({env_name} is set, {len(value)} chars — secret values are not printed)"
+    else:
+        detail = f"({env_name}={value!r})"
+    hint = ""
+    if field in ("admin_ids", "allowed_media_hosts", "guess_reactions", "streak_multiplier_curve"):
+        hint = "\n  list fields accept a comma-separated value (a,b,c) or a JSON array"
+    print(
+        f"error: the environment does not parse — field '{field}' failed to load {detail}\n"
+        f"  fix {env_name} in the deployment's environment variables and redeploy.{hint}",
+        file=sys.stderr,
+    )
+
+
 def _run(coroutine: Awaitable[int]) -> int:
     try:
         return asyncio.run(coroutine)
     except KeyboardInterrupt:
         return 130
     except Exception as exc:
-        print(f"error: {exc}", file=sys.stderr)
+        from pydantic_settings import SettingsError
+
+        if isinstance(exc, SettingsError):
+            _explain_settings_error(exc)
+        else:
+            print(f"error: {exc}", file=sys.stderr)
         return 1
 
 
@@ -141,7 +214,8 @@ async def _doctor(*, json_output: bool = False) -> int:
 
     from waifu.core.app import build_app
 
-    app = await build_app(with_bot=False, negotiate=False)
+    # migrate=False: the doctor reports pending schema work, it does not do it
+    app = await build_app(with_bot=False, negotiate=False, with_plugins=False, migrate=False)
     pending = ""
     try:
         from waifu.db.migrations.runner import plan
@@ -153,12 +227,18 @@ async def _doctor(*, json_output: bool = False) -> int:
         health = await app.ctx.db.healthcheck()
     except Exception as exc:
         health = {"db": f"error: {exc} — run `python -m waifu migrate`"}
+    backup_info = _latest_backup_line(Path(app.ctx.settings.backup_dir))
     report = {
         "health": health,
         "plugins": app.report.summary(),
         "skipped": [f"{path}: {reason}" for path, reason in app.report.skipped],
         "pending_migrations": pending,
         "redis": bool(app.redis),
+        # The owner's event feed: a deploy without it runs "fine" but records
+        # nothing — worth a line here, because /logtest only exists once the bot
+        # is up.
+        "log_channel": app.ctx.settings.log_channel_id,
+        "backup": backup_info,
         "tables": [{"name": name, "bytes": size} for name, size in await app.ctx.db.table_sizes()][
             :40
         ],
@@ -171,6 +251,11 @@ async def _doctor(*, json_output: bool = False) -> int:
         for line in report["skipped"]:
             print(f"  skipped  {line}")
         print(f"redis   : {'connected' if report['redis'] else 'not configured'}")
+        log_channel = report["log_channel"]
+        print(
+            f"logchan : {'channel ' + str(log_channel) + ' — run /logtest once the bot is up' if log_channel else 'not configured (set LOG_CHANNEL_ID)'}"
+        )
+        print(f"backup  : {report['backup']}")
         for key, value in report["health"].items():
             print(f"{key:<8}: {value}")
         if report["health"].get("characters") == 0:
@@ -191,7 +276,7 @@ async def _api(*, host: str = "", port: int = 0, insecure_uid: bool = False) -> 
     from waifu.api import serve
     from waifu.core.app import build_app
 
-    app = await build_app(with_bot=False, negotiate=False)
+    app = await build_app(with_bot=False, negotiate=False, with_plugins=False)
     if insecure_uid:
         app.ctx.settings = app.ctx.settings.model_copy(update={"api_allow_uid_query": True})
         print("warning: ?uid= accepted without a signature — development only")
@@ -219,11 +304,11 @@ async def _migrate(*, seed: bool = True, catalogue: bool | None = None, force: b
     ``no such table`` that this command exists to prevent. Re-running is safe — the
     migration list is recorded in ``schema_version`` and the seed is an upsert.
 
-    ``catalogue=None`` follows ``SEED_CATALOGUE`` (off). A bot that invents characters for
-    its players shows them a demo; the reference deployment had an empty ``characters``
-    table and filled it through ``/upload``, so that is the shipped behaviour here.
+    ``catalogue=None`` follows ``SEED_CATALOGUE`` (on by default: the bot ships playable,
+    with the shipped 177-character catalogue behind ``/summon`` and the spawns).
+    ``SEED_CATALOGUE=0`` starts empty for a roster built with ``/upload``.
     """
-    from waifu.db.engine import Database
+    from waifu.db import Database
     from waifu.db.migrations.runner import apply as apply_migrations
     from waifu.db.seed import seed_all
 
@@ -244,11 +329,11 @@ async def _migrate(*, seed: bool = True, catalogue: bool | None = None, force: b
 #: same text to the owner via ``/rosterstats`` and ``RosterEmpty``; three audiences, one
 #: list of doors, because "where do characters come from?" is the first question here.
 ROSTER_EMPTY_HINT = (
-    "roster  : empty (by design — this bot does not invent characters)\n"
-    "          add them from Telegram: reply to a photo/video/GIF with\n"
+    "roster  : empty — SEED_CATALOGUE=0, so the shipped catalogue was not loaded\n"
+    "          add characters from Telegram: reply to a photo/video/GIF with\n"
     "            /upload <Name> <Series> <1-18>\n"
     "          turn a group into a feed: /autoadd on\n"
-    "          or load the optional catalogue: python -m waifu seed --catalogue\n"
+    "          or set SEED_CATALOGUE=1 and re-run: python -m waifu seed --catalogue\n"
     "          or import your old database: python -m waifu import-legacy summon.db"
 )
 
@@ -296,7 +381,7 @@ async def _import_legacy(args: argparse.Namespace) -> int:
     sys.path.insert(0, ".")
     from scripts.import_summon import Importer, Report, read_source
 
-    from waifu.db.engine import Database
+    from waifu.db import Database
     from waifu.db.seed import seed_all
 
     settings = _settings()
@@ -322,7 +407,7 @@ async def _jobs(name: str) -> int:
     from waifu.core.app import build_app
     from waifu.core.jobs import run_pass
 
-    app = await build_app(with_bot=False, negotiate=False)
+    app = await build_app(with_bot=False, negotiate=False, with_plugins=False)
     try:
         await app.startup()
         results = await run_pass(app.ctx, name)
@@ -331,6 +416,93 @@ async def _jobs(name: str) -> int:
         return 1 if any(result.error for result in results) else 0
     finally:
         await app.shutdown()
+
+
+async def _backup_file(*, dir: str = "") -> int:
+    """``waifu backup`` — the database becomes one JSON file under BACKUP_DIR."""
+    from waifu.db import Database
+
+    settings = _settings()
+    db = Database.from_settings(settings)
+    try:
+        path, counts = await db.backup(dir or str(settings.backup_dir))
+    finally:
+        await db.dispose()
+    total = sum(counts.values())
+    print(f"backup: {path} ({total:,} rows across {len(counts)} tables)")
+    for name, count in sorted(counts.items(), key=lambda item: -item[1])[:15]:
+        print(f"  {name:<28}{count:>10,}")
+    print("restore any time with: python -m waifu restore " + path.name)
+    return 0
+
+
+def _backup_preview(file: str) -> dict[str, Any] | None:
+    """Read and validate a backup file's header (synchronous file work).
+
+    Returns the ``meta`` dict, or prints the reason and returns ``None`` when
+    the file is not a waifu backup — checked *before* anything may be written.
+    """
+    import json as _json
+
+    from waifu.db import BACKUP_MAGIC
+
+    try:
+        payload = _json.loads(Path(file).read_text(encoding="utf-8"))
+        meta = payload.get("meta") if isinstance(payload, dict) else None
+    except Exception as exc:
+        print(f"error: {file} is not readable as a waifu backup ({exc})", file=sys.stderr)
+        return None
+    if (
+        not isinstance(meta, dict)
+        or meta.get("app") != BACKUP_MAGIC["app"]
+        or meta.get("backup") != BACKUP_MAGIC["backup"]
+        or not isinstance(meta.get("tables"), dict)
+    ):
+        print(f"error: {file} is not a waifu backup file (no matching header)", file=sys.stderr)
+        return None
+    return meta
+
+
+def _latest_backup_line(backup_dir: Path) -> str:
+    """The doctor's ``backup:`` line (synchronous file work)."""
+    try:
+        backup_files = sorted(backup_dir.glob("waifu-backup-*.json"), key=lambda p: p.name)
+        if backup_files:
+            latest = backup_files[-1]
+            age_h = (time.time() - latest.stat().st_mtime) / 3600
+            return f"{latest.name} ({age_h:.0f} h ago, {latest.stat().st_size:,} bytes)"
+    except OSError:  # pragma: no cover - unreadable backup dir
+        pass
+    return "none yet (one is taken daily; /backup or `waifu backup` on demand)"
+
+
+async def _restore_file(file: str, *, apply: bool) -> int:
+    """``waifu restore FILE`` — without ``--yes`` this previews and writes nothing."""
+    from waifu.db import BackupError, Database
+
+    meta = _backup_preview(file)
+    if meta is None:
+        return 1
+    tables = meta.get("tables", {})
+    print(
+        f"backup file : {file}\n"
+        f"  created   : {meta.get('created_at')}\n"
+        f"  version   : {meta.get('version')}\n"
+        f"  rows      : {meta.get('rows', 0):,} across {len(tables)} tables"
+    )
+    if not apply:
+        print("\nthis is a preview — run again with --yes to replace the database with it.")
+        return 0
+    db = Database.from_settings(_settings())
+    try:
+        result = await db.restore(file)
+    except BackupError as exc:
+        print(f"error: restore aborted, the database is unchanged — {exc}", file=sys.stderr)
+        return 1
+    finally:
+        await db.dispose()
+    print(f"restored: {result['rows']:,} rows — the database now holds this backup.")
+    return 0
 
 
 def _settings():

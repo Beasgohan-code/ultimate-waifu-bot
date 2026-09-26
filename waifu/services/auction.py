@@ -26,10 +26,10 @@ from typing import Any, ClassVar
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from waifu.db.models import Auction, Character
-from waifu.db.repositories import auctions as auction_repo
-from waifu.db.repositories import collection as collection_repo
-from waifu.db.repositories import economy as ledger
-from waifu.db.repositories import moderation as mod_repo
+from waifu.db.repo import auctions as auction_repo
+from waifu.db.repo import collection as collection_repo
+from waifu.db.repo import economy as ledger
+from waifu.db.repo import moderation as mod_repo
 from waifu.enums import AuctionStatus, ChatMode, LedgerReason, Rarity
 from waifu.errors import Locked, NotFound, WaifuError
 from waifu.services.base import Service

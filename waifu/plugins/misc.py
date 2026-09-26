@@ -178,7 +178,7 @@ async def start(
     roster: dict[str, int] = {}
     try:
         async with ctx.db.session() as session:
-            from waifu.db.repositories import characters as char_repo
+            from waifu.db.repo import characters as char_repo
 
             roster = await char_repo.totals(session)
     except Exception as exc:  # pragma: no cover - the DB is up or we would not be here
@@ -230,8 +230,8 @@ async def start(
 
 async def _apply_referral(message: Message, ctx: AppContext, access: Access, argument: str) -> None:
     """Credit an inviter once, on first /start only (``/invite``)."""
-    from waifu.db.repositories import economy as ledger
-    from waifu.db.repositories import users as user_repo
+    from waifu.db.repo import economy as ledger
+    from waifu.db.repo import users as user_repo
 
     try:
         inviter_id = int(argument.split("-", 1)[1])
@@ -546,7 +546,7 @@ async def settings_command(
 async def send_settings(
     event: Message | CallbackQuery, ctx: AppContext, session: Any, user_id: int
 ) -> None:
-    from waifu.db.repositories import users as user_repo
+    from waifu.db.repo import users as user_repo
 
     pref = await user_repo.prefs(session, user_id)
     modes = [
@@ -591,7 +591,7 @@ async def settings_callback(
     if user is None:
         await callback_query.answer()
         return
-    from waifu.db.repositories import users as user_repo
+    from waifu.db.repo import users as user_repo
 
     parts = (callback_query.data or "").split(":")
     action = parts[1] if len(parts) > 1 else ""
@@ -616,7 +616,7 @@ async def font_command(
     """``/font`` lists the styles, ``/font gothic`` picks one (parity with the old bot)."""
     if user is None:
         return
-    from waifu.db.repositories import users as user_repo
+    from waifu.db.repo import users as user_repo
 
     args = Args.of(command)
     if not args.words:
@@ -672,7 +672,7 @@ async def language(
             message, ctx, f"No catalogue for “{code}”. Available: {', '.join(sorted(locales))}."
         )
         return
-    from waifu.db.repositories import users as user_repo
+    from waifu.db.repo import users as user_repo
 
     # ``locale`` is a column on the player row (upsert owns the write), not a pref flag.
     await user_repo.upsert(session, user.id, locale=code)
@@ -689,18 +689,22 @@ async def language(
 )
 async def added_to_chat(update: ChatMemberUpdated, ctx: AppContext, session: Any) -> None:
     """Getting added registers the chat (spawn feed off until an owner turns it on)."""
-    from waifu.db.repositories import spawns as spawn_repo
+    from waifu.db.repo import spawns as spawn_repo
 
     await spawn_repo.register_group(session, chat_id=update.chat.id, title=update.chat.title or "")
+    from waifu.utils.text import esc
+
+    # The title is user text: escaped before it reaches the owner's channel
+    # (``html=True`` is what tells notify() not to escape it a second time).
+    title = esc(update.chat.title or "") or f"chat {update.chat.id}"
     await ctx.notify(
-        f"➕ added to <b>{update.chat.title or update.chat.id}</b> — /summon to start the feed",
-        silent=True,
+        f"➕ added to <b>{title}</b> — /summon to start the feed", silent=True, html=True
     )
 
 
 @member_bonus_router.my_chat_member(F.my_chat_member.new_status == "kicked")
 async def removed_from_chat(update: ChatMemberUpdated, ctx: AppContext, session: Any) -> None:
-    from waifu.db.repositories import spawns as spawn_repo
+    from waifu.db.repo import spawns as spawn_repo
 
     await spawn_repo.unregister_group(session, update.chat.id)
 
@@ -713,6 +717,15 @@ async def new_member(update: ChatMemberUpdated, ctx: AppContext, session: Any) -
         return
     group = await ctx.moderation.group(
         session, update.chat.id, title=update.chat.title or "", create=False
+    )
+    # The group's own log channel (when set) records every join — the welcome
+    # below is ephemeral and invisible to everyone but the joiner.
+    await ctx.group_notify(
+        session,
+        update.chat.id,
+        f"➕ {member.full_name} (@{member.username}) joined · id {member.id}"
+        if member.username
+        else f"➕ {member.full_name} joined · id {member.id}",
     )
     welcome = (
         str((getattr(group, "data", None) or {}).get("welcome_text") or "")

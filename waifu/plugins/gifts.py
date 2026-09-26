@@ -83,6 +83,7 @@ async def gift(
                 receiver,
                 int(character.id),
                 note=tail or ("anonymous admirer" if anonymous else ""),
+                anonymous=anonymous,
             )
             await _announce(
                 message,
@@ -142,8 +143,15 @@ async def _announce(
     )
     builder.footer(f"gift #{result.get('id', '?')} recorded in /giftlog")
     await card(message, ctx, builder=builder, html=f"🎁 {character.name} → {mention(receiver)}")
-    if ctx.settings.log_channel_id and not anonymous:
-        await ctx.notify(f"🎁 gift: {sender} → {receiver} · {character.name}", silent=True)
+    # A heart on the command message: in a busy group the card scrolls away,
+    # the reaction stays with the moment.
+    if ctx.caps.allow("reactions"):
+        from waifu.tg.interactions import react
+
+        await react(ctx.bot, message, "heart")
+    # The owner's log channel and the receiver's private receipt are written by
+    # ``GiftService.character`` itself — one record per gift, on every entry
+    # point (command, /anon, profile 🎁 button) instead of one per handler.
 
 
 @router.callback_query(F.data.startswith("gift:to:"))

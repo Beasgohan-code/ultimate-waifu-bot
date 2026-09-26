@@ -12,10 +12,10 @@ from __future__ import annotations
 
 import pytest
 
-from waifu.db.repositories import auctions as auction_repo
-from waifu.db.repositories import collection as collection_repo
-from waifu.db.repositories import economy as ledger
-from waifu.db.repositories import users as users_repo
+from waifu.db.repo import auctions as auction_repo
+from waifu.db.repo import collection as collection_repo
+from waifu.db.repo import economy as ledger
+from waifu.db.repo import users as users_repo
 from waifu.enums import AuctionStatus
 from waifu.errors import BidTooLow, Locked, NotFound, WaifuError
 from waifu.services.auction import fmt_bid, format_time_left, progress_bar

@@ -164,7 +164,7 @@ async def _listing_card(ctx: AppContext, view: Any) -> RichMessageBuilder:
 
 
 async def _character_id(session: Any, ctx: AppContext, user_id: int, args: Args) -> int | None:
-    from waifu.db.repositories import collection as collection_repo
+    from waifu.db.repo import collection as collection_repo
 
     token = args.first
     if not token:
@@ -484,7 +484,7 @@ async def send_listing(
 
 
 async def _is_staff(session: Any, user_id: int) -> bool:
-    from waifu.db.repositories import users as user_repo
+    from waifu.db.repo import users as user_repo
 
     player = await user_repo.get(session, user_id)
     return bool(player and str(getattr(player, "role", "user")) in {"owner", "admin", "moderator"})

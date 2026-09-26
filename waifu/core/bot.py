@@ -10,6 +10,7 @@ from __future__ import annotations
 from aiogram import Bot
 from aiogram.client.default import DefaultBotProperties
 from aiogram.client.session.aiohttp import AiohttpSession
+from aiogram.client.telegram import TelegramAPIServer
 from aiogram.enums import ParseMode
 from aiogram.methods import DeleteWebhook
 from aiogram.types import LinkPreviewOptions
@@ -23,12 +24,9 @@ log = get_logger("core.bot")
 def build_session(settings: Settings) -> AiohttpSession:
     """Point at a local Bot API server when configured (large files, less latency)."""
     kwargs: dict[str, object] = {"timeout": 60}
-    if settings.api_url:
-        kwargs["api_url"] = settings.api_url
-    if settings.api_base:
-        kwargs["api_base"] = settings.api_base
-    if settings.api_url or settings.api_base:
-        log.info("using local Bot API server: %s", settings.api_url or settings.api_base)
+    if settings.bot_api_url:
+        kwargs["api"] = TelegramAPIServer.from_base(settings.bot_api_url, is_local=True)
+        log.info("using local Bot API server: %s", settings.bot_api_url.rstrip("/"))
     return AiohttpSession(**kwargs)  # type: ignore[arg-type]
 
 
@@ -73,12 +71,18 @@ async def set_command_menu(
     bot: Bot, commands: list[tuple[str, str]], *, settings: Settings | None = None
 ) -> None:
     """Publish the command menu for private chats, groups and (if wanted) channels."""
-    from aiogram.types import BotCommand, BotCommandScopeChatAdmins, BotCommandScopeDefault
+    from aiogram.types import (
+        BotCommand,
+        BotCommandScopeAllChatAdministrators,
+        BotCommandScopeChatAdministrators,
+        BotCommandScopeDefault,
+    )
 
     cfg = settings or get_settings()
     cmds = [BotCommand(command=name, description=description) for name, description in commands]
     await bot.set_my_commands(cmds, scope=BotCommandScopeDefault())
-    await bot.set_my_commands(cmds, scope=BotCommandScopeChatAdmins())
+    # groups where the bot is admin also get the full menu
+    await bot.set_my_commands(cmds, scope=BotCommandScopeAllChatAdministrators())
     if cfg.support_chat_id:
         await bot.set_my_commands(
             [
@@ -87,7 +91,7 @@ async def set_command_menu(
                 if c.command
                 in {"start", "help", "summon", "spawn", "checkspawn", "changetime", "market"}
             ],
-            scope=BotCommandScopeChatAdmins(chat_id=cfg.support_chat_id),
+            scope=BotCommandScopeChatAdministrators(chat_id=cfg.support_chat_id),
         )
 
 
@@ -114,24 +118,34 @@ async def probe_api_features(bot: Bot) -> dict[str, bool]:
     """
     from aiogram.exceptions import TelegramAPIError
     from aiogram.methods import SendMessageDraft, SendRichMessage
-    from aiogram.types import RichMessage
+    from aiogram.types import InputRichMessage
 
     flags = {"rich_message": False, "message_draft": False, "reactions": False, "guest_mode": False}
     probe_chat = 1  # never valid, but enough to make the server parse the method name
 
-    for key, method in (
-        ("rich_message", SendRichMessage(chat_id=probe_chat, rich_message=RichMessage(blocks=[]))),
-        ("message_draft", SendMessageDraft(chat_id=probe_chat, draft_id="probe", text="probe")),
-    ):
+    # Factories: the payloads must build *inside* the try, so a validation bug
+    # here degrades one flag instead of skipping the whole probe (that bug
+    # shipped once — and the deploy log only showed a bare pydantic traceback).
+    probes = (
+        (
+            "rich_message",
+            lambda: SendRichMessage(chat_id=probe_chat, rich_message=InputRichMessage(blocks=[])),
+        ),
+        ("message_draft", lambda: SendMessageDraft(chat_id=probe_chat, draft_id=7, text="probe")),
+    )
+    for key, factory in probes:
         try:
-            await bot(method)
+            await bot(factory())
         except TelegramAPIError as exc:
             description = (getattr(exc, "message", "") or "").lower()
-            # 'method not found' ⇒ too old. Anything else (bad chat id, missing
-            # parameter…) ⇒ the server knows the method.
-            flags[key] = "not found" not in description
+            # 'method not found' ⇒ the server is too old for the method. Anything
+            # else ⇒ the server knows it — in particular 'chat not found', which
+            # is the *expected* answer to the fake probe chat and must not be
+            # confused with a missing method (that substring bug would disable
+            # rich messages on the official API).
+            flags[key] = "method not found" not in description
         except Exception as exc:  # pragma: no cover - defensive
-            log.debug("probe %s failed: %s", key, exc)
+            log.warning("probe %s failed: %s", key, exc)
     try:
         await bot.set_my_commands([])
         flags["reactions"] = True
